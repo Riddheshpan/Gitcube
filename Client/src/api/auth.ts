@@ -24,7 +24,10 @@ const JIRA_CLIENT_SECRET = '';
 // ─── Redirect URI ───────────────────────────────────────────────────────────
 
 export function getRedirectUri(): string {
-  return makeRedirectUri({ scheme: 'gitcube', path: '' });
+  // On a real device/APK, `native: true` generates the correct gitcube:// URI.
+  // Without it, Expo can generate an exp:// or localhost URI in some builds,
+  // which won't match the callback registered in GitHub/GitLab/Jira OAuth apps.
+  return makeRedirectUri({ scheme: 'gitcube', native: 'gitcube://' });
 }
 
 // ─── Token Storage Helpers ──────────────────────────────────────────────────
