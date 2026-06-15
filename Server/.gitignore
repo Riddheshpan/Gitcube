@@ -1,0 +1,20 @@
+# Environment — contains secrets, NEVER commit this
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Runtime user data — contains hashed passwords and session tokens
+users.json
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,30 @@
+# Project-level gitignore
+
+# Private project notes
+gitcube_project.md
+
+# Environment files — NEVER commit real credentials
+.env
+.env.*
+!**/.env.example
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Runtime data
+Server/users.json
+
+# Android build outputs (APK lives here)
+Client/android/app/build/
+Client/android/build/
+
+# Expo
+Client/.expo/
+Client/dist/
+Client/web-build/
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
