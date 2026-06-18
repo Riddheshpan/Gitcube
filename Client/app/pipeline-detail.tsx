@@ -5,7 +5,9 @@ import { useColorScheme } from 'nativewind';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SecureStore from 'expo-secure-store';
-import { getApiUrl } from '../src/constants/api';
+import { AI_PROXY_URL } from '../src/constants/api';
+import * as GH from '../src/api/github';
+import * as GL from '../src/api/gitlab';
 
 interface LogResponse {
   jobId: string | null;
@@ -37,9 +39,10 @@ export default function PipelineDetailScreen() {
   useEffect(() => {
     const initSession = async () => {
       try {
+        const tokenKey = `${provider}_token`;
         const token = Platform.OS === 'web'
-          ? localStorage.getItem('user_token')
-          : await SecureStore.getItemAsync('user_token');
+          ? localStorage.getItem(tokenKey)
+          : await SecureStore.getItemAsync(tokenKey);
         
         if (!token) {
           router.replace('/login');
@@ -58,15 +61,19 @@ export default function PipelineDetailScreen() {
   const fetchPipelineLogs = async (token: string) => {
     setLoading(true);
     try {
-      const encodedRepo = encodeURIComponent(repo);
-      const res = await fetch(getApiUrl(`/api/git/pipelines/${provider}/${runId}/logs?repoId=${encodedRepo}`), {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (res.status === 200) {
+      let data: LogResponse | null = null;
+      if (provider === 'github') {
+        data = await GH.getPipelineLogs(token, repo, runId);
+      } else if (provider === 'gitlab') {
+        data = await GL.getPipelineLogs(token, parseInt(repo, 10), runId);
+      } else {
+        throw new Error(`Pipeline logs for ${provider} are not yet supported.`);
+      }
+
+      if (data) {
         setLogData(data);
       } else {
-        throw new Error(data.error || 'Failed to fetch build logs');
+        throw new Error('Failed to fetch build logs');
       }
     } catch (e: any) {
       console.error(e);
@@ -84,22 +91,17 @@ export default function PipelineDetailScreen() {
     if (!sessionToken || !logData) return;
     setRerunLoading(true);
     try {
-      const res = await fetch(getApiUrl(`/api/git/pipelines/${provider}/${runId}/rerun`), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionToken}`
-        },
-        body: JSON.stringify({ repoId: repo })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        if (Platform.OS === 'web') alert('Pipeline re-run triggered successfully!');
-        else Alert.alert('Success', 'Pipeline re-run triggered successfully!');
-        fetchPipelineLogs(sessionToken); // reload status/logs
+      if (provider === 'github') {
+        await GH.rerunPipeline(sessionToken, repo, runId);
+      } else if (provider === 'gitlab') {
+        await GL.rerunPipeline(sessionToken, parseInt(repo, 10), runId);
       } else {
-        throw new Error(data.error || 'Failed to re-run pipeline');
+        throw new Error(`Pipeline re-run for ${provider} is not yet supported.`);
       }
+
+      if (Platform.OS === 'web') alert('Pipeline re-run triggered successfully!');
+      else Alert.alert('Success', 'Pipeline re-run triggered successfully!');
+      fetchPipelineLogs(sessionToken); // reload status/logs
     } catch (e: any) {
       console.error(e);
       if (Platform.OS === 'web') alert(`Failed to re-run pipeline: ${e.message}`);
@@ -113,21 +115,28 @@ export default function PipelineDetailScreen() {
     if (!sessionToken || !logData) return;
     setAiLoading(true);
     try {
-      const encodedRepo = encodeURIComponent(repo);
-      const res = await fetch(getApiUrl(`/api/git/pipelines/${provider}/${runId}/analyze`), {
+      const res = await fetch(`${AI_PROXY_URL}/analyze`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionToken}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          repoId: repo,
-          logs: logData.logs
+          logText: logData.logs
         })
       });
+      
+      if (!res.ok) {
+         let errMsg = `AI Proxy returned status ${res.status}`;
+         try {
+           const errData = await res.json();
+           if (errData.error) errMsg = errData.error;
+         } catch(e) {}
+         throw new Error(errMsg);
+      }
+      
       const data = await res.json();
-      if (res.status === 200) {
-        setAiAnalysis(data.analysis);
+      if (data.result) {
+        setAiAnalysis(data.result);
       } else {
         throw new Error(data.error || 'Failed to analyze logs with AI');
       }

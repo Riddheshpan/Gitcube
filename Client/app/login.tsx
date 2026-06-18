@@ -3,13 +3,11 @@ import { View, Text, KeyboardAvoidingView, TouchableOpacity, Platform, ActivityI
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as WebBrowser from 'expo-web-browser';
-import { makeRedirectUri, useAuthRequest } from 'expo-auth-session';
+import { useAuthRequest } from 'expo-auth-session';
 import { Ionicons } from '@expo/vector-icons';
-import { exchangeGitHubCode, exchangeGitLabCode, exchangeJiraCode, saveToken, getToken, deleteToken } from '../src/api/auth';
+import { exchangeGitHubCode, exchangeGitLabCode, exchangeJiraCode, saveToken, getToken, deleteToken, getRedirectUri } from '../src/api/auth';
 
 WebBrowser.maybeCompleteAuthSession();
-
-let globalIsExchanging = false;
 
 // ─── OAuth Discovery Endpoints ──────────────────────────────────────────────
 const githubDiscovery = {
@@ -34,13 +32,18 @@ export default function LoginScreen() {
   const urlCode = params.code as string;
   const [authError, setAuthError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Use a ref instead of a module-level variable so it resets if the component remounts
+  const isExchangingRef = React.useRef(false);
+
+  // Compute the redirect URI once — must be identical in auth request AND token exchange
+  const redirectUri = getRedirectUri();
 
   // ─── Auth Requests (PKCE) ─────────────────────────────────────────────────
   const [request, response, promptAsync] = useAuthRequest(
     {
       clientId: 'Ov23liWht4VD2SttzcEP',
       scopes: ['repo', 'user', 'notifications'],
-      redirectUri: makeRedirectUri({ scheme: 'gitcube', path: '' }),
+      redirectUri,
     },
     githubDiscovery
   );
@@ -49,7 +52,7 @@ export default function LoginScreen() {
     {
       clientId: '8240fdae63b13f74a431fff13a25ace9b1cbf5bed830ddee72eb5faf8439d75a',
       scopes: ['read_user', 'email', 'api'],
-      redirectUri: makeRedirectUri({ scheme: 'gitcube', path: '' }),
+      redirectUri,
     },
     gitlabDiscovery
   );
@@ -58,7 +61,7 @@ export default function LoginScreen() {
     {
       clientId: 'AJYTtVwvdefv99NFPf4gQ7IlDoS7XXMo',
       scopes: ['read:jira-work', 'read:jira-user', 'offline_access'],
-      redirectUri: makeRedirectUri({ scheme: 'gitcube', path: '' }),
+      redirectUri,
       extraParams: { audience: 'api.atlassian.com', prompt: 'consent' },
     },
     jiraDiscovery
@@ -90,15 +93,18 @@ export default function LoginScreen() {
           getToken('jira_token'),
         ]);
         if (gh || gl || jira) { router.replace('/(tabs)'); return; }
-        if (globalIsExchanging) return;
+        if (isExchangingRef.current) return;
         const provider = await getToken('oauth_provider');
         const codeVerifier = await getToken('oauth_code_verifier') ?? '';
+        console.log('[Login] Deep-link code received, provider:', provider, 'code length:', urlCode.length);
         if (provider === 'github') await doExchangeGitHub(urlCode, codeVerifier);
         else if (provider === 'gitlab') await doExchangeGitLab(urlCode, codeVerifier);
-        else if (provider === 'jira') await doExchangeJira(urlCode);
+        else if (provider === 'jira') await doExchangeJira(urlCode, codeVerifier);
+        else console.warn('[Login] No oauth_provider stored — cannot exchange code');
         await Promise.all([deleteToken('oauth_provider'), deleteToken('oauth_code_verifier')]);
       } catch (err) {
         console.error('URL code handler error:', err);
+        setAuthError((err as Error).message || 'Authentication failed');
       }
     };
     handleUrlCode();
@@ -108,26 +114,35 @@ export default function LoginScreen() {
   React.useEffect(() => {
     if (response?.type === 'success' && request?.codeVerifier) {
       doExchangeGitHub(response.params.code, request.codeVerifier);
+    } else if (response?.type === 'error') {
+      console.error('[Login] GitHub auth error:', response.error);
+      setAuthError(response.error?.message || 'GitHub authorization failed');
     }
-  }, [response, request]);
+  }, [response]);
 
   React.useEffect(() => {
     if (gitlabResponse?.type === 'success' && gitlabRequest?.codeVerifier) {
       doExchangeGitLab(gitlabResponse.params.code, gitlabRequest.codeVerifier);
+    } else if (gitlabResponse?.type === 'error') {
+      console.error('[Login] GitLab auth error:', gitlabResponse.error);
+      setAuthError(gitlabResponse.error?.message || 'GitLab authorization failed');
     }
-  }, [gitlabResponse, gitlabRequest]);
+  }, [gitlabResponse]);
 
   React.useEffect(() => {
-    if (jiraResponse?.type === 'success') {
-      doExchangeJira(jiraResponse.params.code);
+    if (jiraResponse?.type === 'success' && jiraRequest?.codeVerifier) {
+      doExchangeJira(jiraResponse.params.code, jiraRequest.codeVerifier);
+    } else if (jiraResponse?.type === 'error') {
+      console.error('[Login] Jira auth error:', jiraResponse.error);
+      setAuthError(jiraResponse.error?.message || 'Jira authorization failed');
     }
   }, [jiraResponse]);
 
   // ─── Exchange Functions (direct — no server) ──────────────────────────────
 
   const doExchangeGitHub = async (code: string, codeVerifier: string) => {
-    if (globalIsExchanging) return;
-    globalIsExchanging = true;
+    if (isExchangingRef.current) return;
+    isExchangingRef.current = true;
     setLoading(true);
     setAuthError('');
     try {
@@ -136,16 +151,17 @@ export default function LoginScreen() {
       await saveToken('username', username);
       router.replace('/(tabs)');
     } catch (err) {
+      console.error('[Login] GitHub exchange failed:', err);
       setAuthError((err as Error).message || 'GitHub login failed');
     } finally {
       setLoading(false);
-      globalIsExchanging = false;
+      isExchangingRef.current = false;
     }
   };
 
   const doExchangeGitLab = async (code: string, codeVerifier: string) => {
-    if (globalIsExchanging) return;
-    globalIsExchanging = true;
+    if (isExchangingRef.current) return;
+    isExchangingRef.current = true;
     setLoading(true);
     setAuthError('');
     try {
@@ -154,28 +170,30 @@ export default function LoginScreen() {
       await saveToken('username', username);
       router.replace('/(tabs)');
     } catch (err) {
+      console.error('[Login] GitLab exchange failed:', err);
       setAuthError((err as Error).message || 'GitLab login failed');
     } finally {
       setLoading(false);
-      globalIsExchanging = false;
+      isExchangingRef.current = false;
     }
   };
 
-  const doExchangeJira = async (code: string) => {
-    if (globalIsExchanging) return;
-    globalIsExchanging = true;
+  const doExchangeJira = async (code: string, codeVerifier: string) => {
+    if (isExchangingRef.current) return;
+    isExchangingRef.current = true;
     setLoading(true);
     setAuthError('');
     try {
-      const { accessToken } = await exchangeJiraCode(code);
+      const { accessToken } = await exchangeJiraCode(code, codeVerifier);
       await saveToken('jira_token', accessToken);
       await saveToken('username', 'Jira User');
       router.replace('/(tabs)');
     } catch (err) {
+      console.error('[Login] Jira exchange failed:', err);
       setAuthError((err as Error).message || 'Jira login failed');
     } finally {
       setLoading(false);
-      globalIsExchanging = false;
+      isExchangingRef.current = false;
     }
   };
 
@@ -200,6 +218,7 @@ export default function LoginScreen() {
   const handleJiraLogin = async () => {
     try {
       await saveToken('oauth_provider', 'jira');
+      if (jiraRequest?.codeVerifier) await saveToken('oauth_code_verifier', jiraRequest.codeVerifier);
       jiraPromptAsync();
     } catch (e) { console.error(e); }
   };
@@ -285,6 +304,11 @@ export default function LoginScreen() {
           <Text className="text-center text-gray-400 text-xs mt-6">
             By continuing, you agree to our Terms of Service.{'\n'}
             Your tokens are stored securely on this device only.
+          </Text>
+
+          {/* Helper for the user to configure their OAuth settings during dev */}
+          <Text selectable className="text-center text-blue-500 font-mono text-[10px] mt-4 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+            Dev Redirect URI: {redirectUri}
           </Text>
 
         </View>

@@ -24,7 +24,10 @@ const JIRA_CLIENT_SECRET = '';
 // ─── Redirect URI ───────────────────────────────────────────────────────────
 
 export function getRedirectUri(): string {
-  return makeRedirectUri({ scheme: 'gitcube', path: '' });
+  // On a real device/APK, `native: true` generates the correct gitcube:// URI.
+  // Without it, Expo can generate an exp:// or localhost URI in some builds,
+  // which won't match the callback registered in GitHub/GitLab/Jira OAuth apps.
+  return makeRedirectUri({ scheme: 'gitcube', native: 'gitcube://' });
 }
 
 // ─── Token Storage Helpers ──────────────────────────────────────────────────
@@ -89,6 +92,7 @@ export async function exchangeGitHubCode(code: string, codeVerifier: string): Pr
       client_secret: GITHUB_CLIENT_SECRET,
       code,
       redirect_uri: redirectUri,
+      code_verifier: codeVerifier,
     }),
   });
 
@@ -153,7 +157,7 @@ export async function exchangeGitLabCode(code: string, codeVerifier: string): Pr
 
 // ─── Jira Token Exchange ───────────────────────────────────────────────────
 
-export async function exchangeJiraCode(code: string): Promise<{ accessToken: string }> {
+export async function exchangeJiraCode(code: string, codeVerifier: string): Promise<{ accessToken: string }> {
   const redirectUri = getRedirectUri();
   const res = await fetch('https://auth.atlassian.com/oauth/token', {
     method: 'POST',
@@ -164,6 +168,7 @@ export async function exchangeJiraCode(code: string): Promise<{ accessToken: str
       code,
       grant_type: 'authorization_code',
       redirect_uri: redirectUri,
+      code_verifier: codeVerifier,
     }),
   });
 

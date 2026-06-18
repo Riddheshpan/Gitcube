@@ -1,0 +1,8 @@
+name = "gitcube-ai-proxy"
+main = "worker.js"
+compatibility_date = "2024-03-29"
+
+# Cloudflare Workers AI binding — runs Llama 3.1 8B natively on Cloudflare's network.
+# No outbound API calls, no DNS errors, completely free on the Workers free tier.
+[ai]
+binding = "AI"

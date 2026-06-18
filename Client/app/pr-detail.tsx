@@ -5,7 +5,9 @@ import { useColorScheme } from 'nativewind';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SecureStore from 'expo-secure-store';
-import { getApiUrl } from '../src/constants/api';
+import { AI_PROXY_URL } from '../src/constants/api';
+import * as GH from '../src/api/github';
+import * as GL from '../src/api/gitlab';
 
 interface FileChange {
   filename: string;
@@ -61,9 +63,10 @@ export default function PRDetailScreen() {
   useEffect(() => {
     const initSession = async () => {
       try {
+        const tokenKey = `${provider}_token`;
         const token = Platform.OS === 'web'
-          ? localStorage.getItem('user_token')
-          : await SecureStore.getItemAsync('user_token');
+          ? localStorage.getItem(tokenKey)
+          : await SecureStore.getItemAsync(tokenKey);
         
         if (!token) {
           router.replace('/login');
@@ -85,32 +88,26 @@ export default function PRDetailScreen() {
   const [changesComment, setChangesComment] = useState('');
 
   const handleApprove = async () => {
-    const approve = () => {
+    const approve = async () => {
       setActionLoading(true);
-      fetch(getApiUrl(`/api/git/prs/${provider}/${prNumber}/approve`), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionToken}`
-        },
-        body: JSON.stringify({ repoId: repo })
-      })
-      .then(res => res.json().then(data => ({ status: res.status, data })))
-      .then(({ status, data }) => {
-        if (status === 200 && data.success) {
-          if (Platform.OS === 'web') alert('PR Approved successfully!');
-          else Alert.alert('Success', 'PR Approved successfully!');
-          if (sessionToken) fetchPRDetail(sessionToken);
+      try {
+        if (provider === 'github') {
+          await GH.approvePR(sessionToken!, repo, prNumber);
+        } else if (provider === 'gitlab') {
+          await GL.approvePR(sessionToken!, parseInt(repo, 10), prNumber);
         } else {
-          throw new Error(data.error || 'Approval failed');
+          throw new Error(`Direct approval for ${provider} is not yet supported.`);
         }
-      })
-      .catch(e => {
+        if (Platform.OS === 'web') alert('PR Approved successfully!');
+        else Alert.alert('Success', 'PR Approved successfully!');
+        if (sessionToken) fetchPRDetail(sessionToken);
+      } catch (e: any) {
         console.error(e);
         if (Platform.OS === 'web') alert(`Failed to approve PR: ${e.message}`);
         else Alert.alert('Error', `Failed to approve PR: ${e.message}`);
-      })
-      .finally(() => setActionLoading(false));
+      } finally {
+        setActionLoading(false);
+      }
     };
 
     if (Platform.OS === 'web') {
@@ -137,22 +134,16 @@ export default function PRDetailScreen() {
     }
     setActionLoading(true);
     try {
-      const res = await fetch(getApiUrl(`/api/git/prs/${provider}/${prNumber}/request-changes`), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionToken}`
-        },
-        body: JSON.stringify({ repoId: repo, comment })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        if (Platform.OS === 'web') alert('Changes requested successfully.');
-        else Alert.alert('Success', 'Changes requested successfully.');
-        if (sessionToken) fetchPRDetail(sessionToken);
+      if (provider === 'github') {
+        await GH.requestChangesPR(sessionToken!, repo, prNumber, comment);
+      } else if (provider === 'gitlab') {
+        await GL.requestChangesPR(sessionToken!, parseInt(repo, 10), prNumber, comment);
       } else {
-        throw new Error(data.error || 'Action failed');
+        throw new Error(`Direct changes request for ${provider} is not yet supported.`);
       }
+      if (Platform.OS === 'web') alert('Changes requested successfully.');
+      else Alert.alert('Success', 'Changes requested successfully.');
+      if (sessionToken) fetchPRDetail(sessionToken);
     } catch (e: any) {
       console.error(e);
       if (Platform.OS === 'web') alert(`Failed to submit request: ${e.message}`);
@@ -163,32 +154,26 @@ export default function PRDetailScreen() {
   };
 
   const handleMergePrompt = () => {
-    const merge = (method: 'merge' | 'squash' | 'rebase') => {
+    const merge = async (method: 'merge' | 'squash' | 'rebase') => {
       setActionLoading(true);
-      fetch(getApiUrl(`/api/git/prs/${provider}/${prNumber}/merge`), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionToken}`
-        },
-        body: JSON.stringify({ repoId: repo, mergeMethod: method })
-      })
-      .then(res => res.json().then(data => ({ status: res.status, data })))
-      .then(({ status, data }) => {
-        if (status === 200 && data.success) {
-          if (Platform.OS === 'web') alert('PR merged successfully!');
-          else Alert.alert('Success', 'PR merged successfully!');
-          if (sessionToken) fetchPRDetail(sessionToken);
+      try {
+        if (provider === 'github') {
+          await GH.mergePR(sessionToken!, repo, prNumber, method);
+        } else if (provider === 'gitlab') {
+          await GL.mergePR(sessionToken!, parseInt(repo, 10), prNumber, method);
         } else {
-          throw new Error(data.error || 'Merge failed');
+          throw new Error(`Direct merge for ${provider} is not yet supported.`);
         }
-      })
-      .catch(e => {
+        if (Platform.OS === 'web') alert('PR merged successfully!');
+        else Alert.alert('Success', 'PR merged successfully!');
+        if (sessionToken) fetchPRDetail(sessionToken);
+      } catch (e: any) {
         console.error(e);
         if (Platform.OS === 'web') alert(`Failed to merge PR: ${e.message}`);
         else Alert.alert('Error', `Failed to merge PR: ${e.message}`);
-      })
-      .finally(() => setActionLoading(false));
+      } finally {
+        setActionLoading(false);
+      }
     };
 
     if (provider === 'gitlab') {
@@ -225,15 +210,19 @@ export default function PRDetailScreen() {
   const fetchPRDetail = async (token: string) => {
     setLoading(true);
     try {
-      const encodedRepo = encodeURIComponent(repo);
-      const res = await fetch(getApiUrl(`/api/git/prs/${provider}/${prNumber}?repoId=${encodedRepo}`), {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (res.status === 200) {
+      let data: PRDetail | null = null;
+      if (provider === 'github') {
+        data = await GH.getPRDetail(token, repo, prNumber) as any;
+      } else if (provider === 'gitlab') {
+        data = await GL.getPRDetail(token, parseInt(repo, 10), prNumber) as any;
+      } else {
+        throw new Error(`Details fetch for ${provider} is not yet supported.`);
+      }
+      
+      if (data) {
         setPr(data);
       } else {
-        throw new Error(data.error || 'Failed to fetch PR details');
+        throw new Error('Failed to fetch PR details');
       }
     } catch (e: any) {
       console.error(e);
@@ -251,18 +240,29 @@ export default function PRDetailScreen() {
     if (!sessionToken || !pr) return;
     setAiLoading(true);
     try {
-      const encodedRepo = encodeURIComponent(repo);
-      const res = await fetch(getApiUrl(`/api/git/prs/${provider}/${prNumber}/summarize`), {
+      // Concatenate the diffs from files
+      const fullDiff = pr.files.map(f => `--- a/${f.filename}\n+++ b/${f.filename}\n${f.patch}`).join("\n");
+      
+      const res = await fetch(`${AI_PROXY_URL}/summarize`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionToken}`
+          'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ repoId: repo })
+        body: JSON.stringify({ diffText: fullDiff })
       });
+      
+      if (!res.ok) {
+         let errMsg = `AI Proxy returned status ${res.status}`;
+         try {
+           const errData = await res.json();
+           if (errData.error) errMsg = errData.error;
+         } catch(e) {}
+         throw new Error(errMsg);
+      }
+      
       const data = await res.json();
-      if (res.status === 200) {
-        setAiSummary(data.summary);
+      if (data.result) {
+        setAiSummary(data.result);
       } else {
         throw new Error(data.error || 'Failed to generate AI summary');
       }

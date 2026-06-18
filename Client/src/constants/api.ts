@@ -7,12 +7,7 @@ export const GITHUB_API = 'https://api.github.com';
 export const GITLAB_API = 'https://gitlab.com/api/v4';
 export const JIRA_API = 'https://api.atlassian.com';
 
-/**
- * @deprecated No longer used. The app no longer has a backend server.
- * Kept as a stub to avoid breaking any remaining imports during migration.
- */
-export const API_BASE_URL = '';
-export const getApiUrl = (path: string): string => {
-  console.warn(`[DEPRECATED] getApiUrl called with "${path}" — server has been removed. Update this call to use src/api/ helpers.`);
-  return `http://localhost:5000${path}`;
-};
+// Add your Cloudflare Worker URL here after running `npx wrangler deploy` in the CloudflareWorker directory.
+// Make sure it does not end with a trailing slash.
+export const AI_PROXY_URL = 'https://gitcube-ai-proxy.ridd.workers.dev';
+

@@ -17,7 +17,6 @@ import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import { useColorScheme } from "nativewind";
-import { getApiUrl } from "../src/constants/api";
 
 const DEFAULT_USERNAME = "Test";
 const DEFAULT_FULLNAME = "test example";
@@ -67,19 +66,25 @@ export default function Profilepage() {
   };
 
   const fetchProfile = async () => {
-    let localUsername: string | null = null;
     try {
       setLoading(true);
       const token = Platform.OS === "web"
-        ? localStorage.getItem("user_token")
-        : await SecureStore.getItemAsync("user_token");
+        ? localStorage.getItem("github_token") || localStorage.getItem("gitlab_token") || localStorage.getItem("jira_token")
+        : (await SecureStore.getItemAsync("github_token")) || (await SecureStore.getItemAsync("gitlab_token")) || (await SecureStore.getItemAsync("jira_token"));
         
-      localUsername = Platform.OS === "web"
+      const localUsername = Platform.OS === "web"
         ? localStorage.getItem("username")
         : await SecureStore.getItemAsync("username");
 
+      const localFullName = Platform.OS === "web" ? localStorage.getItem("fullName") : await SecureStore.getItemAsync("fullName");
+      const localEmail = Platform.OS === "web" ? localStorage.getItem("email") : await SecureStore.getItemAsync("email");
+      const localWorkspace = Platform.OS === "web" ? localStorage.getItem("defaultWorkspace") : await SecureStore.getItemAsync("defaultWorkspace");
+
+      const ghToken = Platform.OS === "web" ? localStorage.getItem("github_token") : await SecureStore.getItemAsync("github_token");
+      const glToken = Platform.OS === "web" ? localStorage.getItem("gitlab_token") : await SecureStore.getItemAsync("gitlab_token");
+
       if (!token) {
-        // Offline / Not Logged In guest fallback (matches screenshot exactly)
+        // Offline / Not Logged In guest fallback
         setProfile({
           username: DEFAULT_USERNAME,
           fullName: DEFAULT_FULLNAME,
@@ -89,93 +94,33 @@ export default function Profilepage() {
         setEditFullName(DEFAULT_FULLNAME);
         setEditEmail(DEFAULT_EMAIL);
         setEditDefaultWorkspace(DEFAULT_WORKSPACE);
-        setGithubConnected(true);
-        setGitlabConnected(true);
+        setGithubConnected(false);
+        setGitlabConnected(false);
         setLoading(false);
         return;
       }
 
-      const res = await fetch(getApiUrl("/api/user/profile"), {
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
-      });
-      
-      if (res.status === 401) {
-        // Session expired or token invalid. Clear tokens and redirect.
-        if (Platform.OS === "web") {
-          localStorage.removeItem("user_token");
-          localStorage.removeItem("username");
-          localStorage.removeItem("github_token");
-          localStorage.removeItem("gitlab_token");
-          localStorage.removeItem("jira_token");
-        } else {
-          await SecureStore.deleteItemAsync("user_token");
-          await SecureStore.deleteItemAsync("username");
-          await SecureStore.deleteItemAsync("github_token");
-          await SecureStore.deleteItemAsync("gitlab_token");
-          await SecureStore.deleteItemAsync("jira_token");
-        }
-        router.replace("/login");
-        return;
-      }
-      
-      if (res.ok) {
-        const data = await res.json();
-        const activeUsername = data.username || localUsername || DEFAULT_USERNAME;
-        
-        // Derive fallbacks from username if fields are empty on server
-        const derivedName = formatFullName(activeUsername);
-        const derivedEmail = `${activeUsername.toLowerCase()}@example.com`;
-
-        const updatedProfile = {
-          username: activeUsername,
-          fullName: data.fullName || derivedName,
-          email: data.email || derivedEmail,
-          defaultWorkspace: data.defaultWorkspace || DEFAULT_WORKSPACE
-        };
-        setProfile(updatedProfile);
-        
-        // Initialize form fields
-        setEditFullName(updatedProfile.fullName);
-        setEditEmail(updatedProfile.email);
-        setEditDefaultWorkspace(updatedProfile.defaultWorkspace);
-        
-        if (data.connections) {
-          setGithubConnected(data.connections.github);
-          setGitlabConnected(data.connections.gitlab);
-        }
-      } else {
-        // Fail-safe local fallback matching user account or screenshot
-        const activeUsername = localUsername || DEFAULT_USERNAME;
-        const derivedName = formatFullName(activeUsername);
-        const derivedEmail = `${activeUsername.toLowerCase()}@example.com`;
-
-        setProfile({
-          username: activeUsername,
-          fullName: derivedName,
-          email: derivedEmail,
-          defaultWorkspace: DEFAULT_WORKSPACE
-        });
-        
-        setGithubConnected(true);
-        setGitlabConnected(true);
-      }
-    } catch (e) {
-      console.warn("Could not load profile from server, using local fallback:", e);
       const activeUsername = localUsername || DEFAULT_USERNAME;
-      const derivedName = formatFullName(activeUsername);
-      const derivedEmail = `${activeUsername.toLowerCase()}@example.com`;
+      const derivedName = localFullName || formatFullName(activeUsername);
+      const derivedEmail = localEmail || `${activeUsername.toLowerCase()}@example.com`;
 
-      setProfile({
+      const updatedProfile = {
         username: activeUsername,
         fullName: derivedName,
         email: derivedEmail,
-        defaultWorkspace: DEFAULT_WORKSPACE
-      });
+        defaultWorkspace: localWorkspace || DEFAULT_WORKSPACE
+      };
+      setProfile(updatedProfile);
       
-      setGithubConnected(true);
-      setGitlabConnected(true);
+      setEditFullName(updatedProfile.fullName);
+      setEditEmail(updatedProfile.email);
+      setEditDefaultWorkspace(updatedProfile.defaultWorkspace);
+      
+      setGithubConnected(!!ghToken);
+      setGitlabConnected(!!glToken);
+
+    } catch (e) {
+      console.warn("Could not load profile from local storage, using fallback:", e);
     } finally {
       setLoading(false);
     }
@@ -198,50 +143,28 @@ export default function Profilepage() {
   const handleSaveProfile = async () => {
     try {
       setSaving(true);
-      const token = Platform.OS === "web"
-        ? localStorage.getItem("user_token")
-        : await SecureStore.getItemAsync("user_token");
-        
-      if (!token) {
-        // Update local state if running offline/without server
-        setProfile(prev => ({
-          ...prev,
-          fullName: editFullName,
-          email: editEmail,
-          defaultWorkspace: editDefaultWorkspace
-        }));
-        setEditModalVisible(false);
-        return;
-      }
       
-      const res = await fetch(getApiUrl("/api/user/profile"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          fullName: editFullName,
-          email: editEmail,
-          defaultWorkspace: editDefaultWorkspace
-        })
-      });
-      
-      if (res.ok) {
-        const data = await res.json();
-        setProfile(prev => ({
-          ...prev,
-          fullName: data.profile.fullName,
-          email: data.profile.email,
-          defaultWorkspace: data.profile.defaultWorkspace
-        }));
-        setEditModalVisible(false);
+      if (Platform.OS === "web") {
+        localStorage.setItem("fullName", editFullName);
+        localStorage.setItem("email", editEmail);
+        localStorage.setItem("defaultWorkspace", editDefaultWorkspace);
       } else {
-        alert("Failed to update profile on server.");
+        await SecureStore.setItemAsync("fullName", editFullName);
+        await SecureStore.setItemAsync("email", editEmail);
+        await SecureStore.setItemAsync("defaultWorkspace", editDefaultWorkspace);
       }
+      
+      setProfile(prev => ({
+        ...prev,
+        fullName: editFullName,
+        email: editEmail,
+        defaultWorkspace: editDefaultWorkspace
+      }));
+      setEditModalVisible(false);
+
     } catch (e) {
       console.error("Error saving profile:", e);
-      alert("Network error updating profile.");
+      alert("Error saving profile.");
     } finally {
       setSaving(false);
     }
@@ -254,13 +177,19 @@ export default function Profilepage() {
         localStorage.removeItem('gitlab_token');
         localStorage.removeItem('jira_token');
         localStorage.removeItem('user_token');
-        localStorage.removeItem('username');
+        localStorage.removeItem('fullName');
+        localStorage.removeItem('email');
+        localStorage.removeItem('defaultWorkspace');
       } else {
         await SecureStore.deleteItemAsync('github_token');
         await SecureStore.deleteItemAsync('gitlab_token');
         await SecureStore.deleteItemAsync('jira_token');
-        await SecureStore.deleteItemAsync('user_token');
+        await SecureStore.deleteItemAsync('trello_token');
         await SecureStore.deleteItemAsync('username');
+        await SecureStore.deleteItemAsync('user_token');
+        await SecureStore.deleteItemAsync('fullName');
+        await SecureStore.deleteItemAsync('email');
+        await SecureStore.deleteItemAsync('defaultWorkspace');
       }
       router.replace('/login');
     } catch (e) {
@@ -290,18 +219,6 @@ export default function Profilepage() {
       "Are you sure you want to revoke all API sessions? You will be logged out of this and all other devices.",
       async () => {
         try {
-          const token = Platform.OS === "web"
-            ? localStorage.getItem("user_token")
-            : await SecureStore.getItemAsync("user_token");
-            
-          if (token) {
-            await fetch(getApiUrl("/api/user/revoke-tokens"), {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${token}`
-              }
-            });
-          }
           await handleSignOut();
         } catch (e) {
           console.error("Revoke tokens error:", e);
@@ -317,18 +234,6 @@ export default function Profilepage() {
       "Are you sure you want to permanently delete your account? This action cannot be undone and all your board caches will be wiped.",
       async () => {
         try {
-          const token = Platform.OS === "web"
-            ? localStorage.getItem("user_token")
-            : await SecureStore.getItemAsync("user_token");
-            
-          if (token) {
-            await fetch(getApiUrl("/api/user"), {
-              method: "DELETE",
-              headers: {
-                "Authorization": `Bearer ${token}`
-              }
-            });
-          }
           await handleSignOut();
         } catch (e) {
           console.error("Delete account error:", e);
