@@ -7,7 +7,7 @@ import * as WebBrowser from 'expo-web-browser';
 import * as SecureStore from 'expo-secure-store';
 import { makeRedirectUri, useAuthRequest } from 'expo-auth-session';
 import { Platform } from 'react-native';
-import { getApiUrl } from '../src/constants/api';
+import { exchangeGitHubCode, exchangeGitLabCode, exchangeJiraCode, getToken, saveToken, deleteToken } from '../src/api/auth';
 
 let globalIsExchanging = false;
 
@@ -85,25 +85,18 @@ export default function ConnectedAccountsScreen() {
   );
 
   React.useEffect(() => {
-    // Check initial connection status from backend
+    // Check initial connection status from local storage
     const checkConnections = async () => {
       try {
-        const userToken = await getSessionToken();
-        if (!userToken) return;
-
-        const res = await fetch(getApiUrl('/api/connections'), {
-          headers: {
-            'Authorization': `Bearer ${userToken}`
-          }
-        });
+        const gh = await getToken('github_token');
+        const gl = await getToken('gitlab_token');
+        const ji = await getToken('jira_token');
+        const tr = await getToken('trello_token');
         
-        if (res.ok) {
-          const data = await res.json();
-          setGithubConnected(!!data.github);
-          setGitlabConnected(!!data.gitlab);
-          setJiraConnected(!!data.jira);
-          setTrelloConnected(!!data.trello);
-        }
+        setGithubConnected(!!gh);
+        setGitlabConnected(!!gl);
+        setJiraConnected(!!ji);
+        setTrelloConnected(!!tr);
       } catch (e) {
         console.error('Error fetching connections status', e);
       }
@@ -128,9 +121,9 @@ export default function ConnectedAccountsScreen() {
           if (provider === 'github') {
             exchangeCode(urlCode, codeVerifier || '');
           } else if (provider === 'gitlab') {
-            exchangeGitLabCode(urlCode, codeVerifier || '');
+            exchangeGitLabCodeLocal(urlCode, codeVerifier || '');
           } else if (provider === 'jira') {
-            exchangeJiraCode(urlCode);
+            exchangeJiraCodeLocal(urlCode, codeVerifier || '');
           }
           
           // Clean up
@@ -159,68 +152,30 @@ export default function ConnectedAccountsScreen() {
   React.useEffect(() => {
     if (gitlabResponse?.type === 'success' && gitlabRequest?.codeVerifier) {
       const { code } = gitlabResponse.params;
-      exchangeGitLabCode(code, gitlabRequest.codeVerifier);
+      exchangeGitLabCodeLocal(code, gitlabRequest.codeVerifier);
     }
   }, [gitlabResponse, gitlabRequest]);
 
-  const getSessionToken = async () => {
-    return Platform.OS === 'web'
-      ? localStorage.getItem('user_token')
-      : await SecureStore.getItemAsync('user_token');
-  };
+  React.useEffect(() => {
+    if (jiraResponse?.type === 'success' && jiraRequest?.codeVerifier) {
+      const { code } = jiraResponse.params;
+      exchangeJiraCodeLocal(code, jiraRequest.codeVerifier);
+    }
+  }, [jiraResponse, jiraRequest]);
 
   const disconnectBackendConnection = async (provider: 'github' | 'gitlab' | 'jira' | 'trello') => {
-    try {
-      const userToken = await getSessionToken();
-      if (!userToken) return;
-      
-      const apiUrl = getApiUrl('/api/connections/disconnect');
-      
-      await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${userToken}`
-        },
-        body: JSON.stringify({ provider })
-      });
-    } catch (e) {
-      console.error(`Failed to disconnect backend connection for ${provider}:`, e);
-    }
+    // Standalone app: Just delete local token
+    await deleteToken(`${provider}_token`);
   };
 
   const exchangeCode = async (code: string, codeVerifier: string) => {
     if (globalIsExchanging) return;
     globalIsExchanging = true;
     try {
-      const apiUrl = getApiUrl('/auth/github');
-      const redirectUri = makeRedirectUri({
-        scheme: 'gitcube',
-        path: ''
-      });
-      const userToken = await getSessionToken();
-      
-      const res = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(userToken && { 'Authorization': `Bearer ${userToken}` })
-        },
-        body: JSON.stringify({ code, code_verifier: codeVerifier, redirect_uri: redirectUri })
-      });
-      const data = await res.json();
-      
-      if (data.access_token) {
-        if (Platform.OS === 'web') {
-          localStorage.setItem('github_token', data.access_token);
-        } else {
-          await SecureStore.setItemAsync('github_token', data.access_token);
-        }
-        setGithubConnected(true);
-        router.replace('/(tabs)');
-      } else {
-        console.error('Failed to get token:', data);
-      }
+      const { accessToken } = await exchangeGitHubCode(code, codeVerifier);
+      await saveToken('github_token', accessToken);
+      setGithubConnected(true);
+      router.replace('/(tabs)');
     } catch (error) {
       console.error('Error exchanging code:', error);
     } finally {
@@ -228,42 +183,14 @@ export default function ConnectedAccountsScreen() {
     }
   };
 
-  const exchangeGitLabCode = async (code: string, codeVerifier: string) => {
+  const exchangeGitLabCodeLocal = async (code: string, codeVerifier: string) => {
     if (globalIsExchanging) return;
     globalIsExchanging = true;
     try {
-      const apiUrl = getApiUrl('/auth/gitlab');
-      const redirectUri = makeRedirectUri({
-        scheme: 'gitcube',
-        path: ''
-      });
-      const userToken = await getSessionToken();
-      
-      const res = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(userToken && { 'Authorization': `Bearer ${userToken}` })
-        },
-        body: JSON.stringify({ 
-          code, 
-          code_verifier: codeVerifier,
-          redirect_uri: redirectUri
-        })
-      });
-      const data = await res.json();
-      
-      if (data.access_token) {
-        if (Platform.OS === 'web') {
-          localStorage.setItem('gitlab_token', data.access_token);
-        } else {
-          await SecureStore.setItemAsync('gitlab_token', data.access_token);
-        }
-        setGitlabConnected(true);
-        router.replace('/(tabs)');
-      } else {
-        console.error('Failed to get GitLab token:', data);
-      }
+      const { accessToken } = await exchangeGitLabCode(code, codeVerifier);
+      await saveToken('gitlab_token', accessToken);
+      setGitlabConnected(true);
+      router.replace('/(tabs)');
     } catch (error) {
       console.error('Error exchanging GitLab code:', error);
     } finally {
@@ -271,40 +198,14 @@ export default function ConnectedAccountsScreen() {
     }
   };
 
-  const exchangeJiraCode = async (code: string) => {
+  const exchangeJiraCodeLocal = async (code: string, codeVerifier: string) => {
     if (globalIsExchanging) return;
     globalIsExchanging = true;
     try {
-      const apiUrl = getApiUrl('/auth/jira');
-      const redirectUri = makeRedirectUri({
-        scheme: 'gitcube',
-        path: ''
-      });
-      const userToken = await getSessionToken();
-      
-      const res = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(userToken && { 'Authorization': `Bearer ${userToken}` })
-        },
-        body: JSON.stringify({ 
-          code,
-          redirect_uri: redirectUri
-        })
-      });
-      const data = await res.json();
-      
-      if (data.access_token) {
-        if (Platform.OS === 'web') {
-          localStorage.setItem('jira_token', data.access_token);
-        } else {
-          await SecureStore.setItemAsync('jira_token', data.access_token);
-        }
-        setJiraConnected(true);
-      } else {
-        console.error('Failed to get Jira token:', data);
-      }
+      const { accessToken } = await exchangeJiraCode(code, codeVerifier);
+      await saveToken('jira_token', accessToken);
+      setJiraConnected(true);
+      router.replace('/(tabs)');
     } catch (error) {
       console.error('Error exchanging Jira code:', error);
     } finally {
@@ -323,29 +224,13 @@ export default function ConnectedAccountsScreen() {
 
     setTrelloConnecting(true);
     try {
-      const userToken = await getSessionToken();
-      if (!userToken) return;
-
-      const apiUrl = getApiUrl('/api/connections/trello');
-
-      const res = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${userToken}`
-        },
-        body: JSON.stringify({ apiKey: trelloApiKey, token: trelloToken })
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setTrelloConnected(true);
-        setShowTrelloModal(false);
-        setTrelloApiKey('');
-        setTrelloToken('');
-      } else {
-        throw new Error(data.error || 'Failed to connect Trello');
-      }
+      await saveToken('trello_api_key', trelloApiKey);
+      await saveToken('trello_token', trelloToken);
+      
+      setTrelloConnected(true);
+      setShowTrelloModal(false);
+      setTrelloApiKey('');
+      setTrelloToken('');
     } catch (e: any) {
       console.error('Trello connect error:', e);
       if (Platform.OS === 'web') {
@@ -393,11 +278,6 @@ export default function ConnectedAccountsScreen() {
             onPress={async () => {
               if (githubConnected) {
                 await disconnectBackendConnection('github');
-                if (Platform.OS === 'web') {
-                  localStorage.removeItem('github_token');
-                } else {
-                  await SecureStore.deleteItemAsync('github_token');
-                }
                 setGithubConnected(false);
                 // Only redirect to login if no other account is connected
                 if (!gitlabConnected && !jiraConnected) {
@@ -448,11 +328,6 @@ export default function ConnectedAccountsScreen() {
             onPress={async () => {
               if (gitlabConnected) {
                 await disconnectBackendConnection('gitlab');
-                if (Platform.OS === 'web') {
-                  localStorage.removeItem('gitlab_token');
-                } else {
-                  await SecureStore.deleteItemAsync('gitlab_token');
-                }
                 setGitlabConnected(false);
                 // Only redirect to login if no other account is connected
                 if (!githubConnected && !jiraConnected) {
@@ -503,11 +378,6 @@ export default function ConnectedAccountsScreen() {
             onPress={async () => {
               if (jiraConnected) {
                 await disconnectBackendConnection('jira');
-                if (Platform.OS === 'web') {
-                  localStorage.removeItem('jira_token');
-                } else {
-                  await SecureStore.deleteItemAsync('jira_token');
-                }
                 setJiraConnected(false);
                 if (!githubConnected && !gitlabConnected && !trelloConnected) {
                   router.replace('/login');
@@ -516,8 +386,14 @@ export default function ConnectedAccountsScreen() {
                 try {
                   if (Platform.OS === 'web') {
                     localStorage.setItem('oauth_provider', 'jira');
+                    if (jiraRequest?.codeVerifier) {
+                      localStorage.setItem('oauth_code_verifier', jiraRequest.codeVerifier);
+                    }
                   } else {
                     await SecureStore.setItemAsync('oauth_provider', 'jira');
+                    if (jiraRequest?.codeVerifier) {
+                      await SecureStore.setItemAsync('oauth_code_verifier', jiraRequest.codeVerifier);
+                    }
                   }
                   jiraPromptAsync();
                 } catch (e) {

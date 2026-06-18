@@ -140,6 +140,135 @@ export async function getMRs(token: string, projectId: number, state: 'opened' |
   }));
 }
 
+export interface GLMRDetail extends GLMR {
+  body: string;
+  reviewers: { username: string; state: string }[];
+  comments: {
+    id: string;
+    authorName: string;
+    authorAvatarUrl: string | null;
+    body: string;
+    createdAt: string;
+  }[];
+  files: {
+    filename: string;
+    additions: number;
+    deletions: number;
+    patch: string;
+  }[];
+}
+
+export async function getPRDetail(token: string, projectId: number, prNumber: string): Promise<GLMRDetail | null> {
+  // 1. Fetch details
+  const mrRes = await fetch(`${GITLAB_API}/projects/${projectId}/merge_requests/${prNumber}`, { headers: glHeaders(token) });
+  if (!mrRes.ok) return null;
+  const mr = await mrRes.json();
+
+  // 2. Fetch changes (files & patches)
+  let files = [];
+  try {
+    const changesRes = await fetch(`${GITLAB_API}/projects/${projectId}/merge_requests/${prNumber}/changes`, { headers: glHeaders(token) });
+    if (changesRes.ok) {
+      const changes = await changesRes.json();
+      files = (changes.changes || []).map((f: any) => ({
+        filename: f.new_path || f.old_path,
+        additions: parseInt(f.diff?.split("\n").filter((line: string) => line.startsWith("+") && !line.startsWith("+++")).length || 0),
+        deletions: parseInt(f.diff?.split("\n").filter((line: string) => line.startsWith("-") && !line.startsWith("---")).length || 0),
+        patch: f.diff || ""
+      }));
+    }
+  } catch (e) {
+    console.warn("Failed to fetch GitLab MR changes", e);
+  }
+
+  // 3. Fetch comments/discussions
+  let comments: GLMRDetail['comments'] = [];
+  try {
+    const notesRes = await fetch(`${GITLAB_API}/projects/${projectId}/merge_requests/${prNumber}/notes?per_page=50`, { headers: glHeaders(token) });
+    if (notesRes.ok) {
+      const notes = await notesRes.json();
+      comments = notes
+        .filter((n: any) => !n.system) // exclude system messages
+        .map((n: any) => ({
+          id: n.id.toString(),
+          authorName: n.author?.username || "Unknown",
+          authorAvatarUrl: n.author?.avatar_url || null,
+          body: n.body,
+          createdAt: n.created_at
+        }));
+      comments.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    }
+  } catch (e) {
+    console.warn("Failed to fetch GitLab MR notes", e);
+  }
+
+  // 4. Fetch pipeline checks
+  let checksStatus: GLMRDetail['checksStatus'] = "none";
+  try {
+    const pipelinesRes = await fetch(`${GITLAB_API}/projects/${projectId}/merge_requests/${prNumber}/pipelines`, { headers: glHeaders(token) });
+    if (pipelinesRes.ok) {
+      const pipelines = await pipelinesRes.json();
+      if (pipelines.length > 0) {
+        const latest = pipelines[0];
+        if (latest.status === 'success') checksStatus = 'passing';
+        else if (latest.status === 'failed' || latest.status === 'canceled') checksStatus = 'failing';
+        else if (latest.status === 'running' || latest.status === 'pending') checksStatus = 'pending';
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to fetch GitLab MR checks", e);
+  }
+
+  return {
+    id: mr.id.toString(),
+    number: mr.iid,
+    title: mr.title,
+    body: mr.description || "No description provided.",
+    state: mr.draft ? 'draft' : mr.state === 'merged' ? 'merged' : mr.state === 'closed' ? 'closed' : 'open',
+    authorName: mr.author?.username || "Unknown",
+    authorAvatarUrl: mr.author?.avatar_url || null,
+    createdAt: mr.created_at,
+    updatedAt: mr.updated_at,
+    branchName: mr.source_branch,
+    checksStatus,
+    reviewers: (mr.reviewers || []).map((r: any) => ({
+      username: r.username,
+      state: "PENDING"
+    })),
+    comments,
+    files
+  };
+}
+
+export async function approvePR(token: string, projectId: number, prNumber: string) {
+  const res = await fetch(`${GITLAB_API}/projects/${projectId}/merge_requests/${prNumber}/approve`, {
+    method: 'POST',
+    headers: glHeaders(token)
+  });
+  if (!res.ok) throw new Error(`Approve failed: ${res.status}`);
+}
+
+export async function requestChangesPR(token: string, projectId: number, prNumber: string, comment: string) {
+  const res = await fetch(`${GITLAB_API}/projects/${projectId}/merge_requests/${prNumber}/notes`, {
+    method: 'POST',
+    headers: glHeaders(token),
+    body: JSON.stringify({ body: `⚠️ **Changes Requested:** ${comment}` })
+  });
+  if (!res.ok) throw new Error(`Request changes failed: ${res.status}`);
+}
+
+export async function mergePR(token: string, projectId: number, prNumber: string, mergeMethod: 'merge' | 'squash' | 'rebase' = 'merge') {
+  const res = await fetch(`${GITLAB_API}/projects/${projectId}/merge_requests/${prNumber}/merge`, {
+    method: 'PUT',
+    headers: glHeaders(token),
+    body: JSON.stringify({ merge_commit_message: "Merged via gitCube standalone app" })
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.message || `Merge failed: ${res.status}`);
+  }
+}
+
 // ─── Pipelines ─────────────────────────────────────────────────────────────
 
 export interface GLPipeline {
@@ -173,6 +302,57 @@ function mapPipelineStatus(status: string): GLPipeline['status'] {
   return 'pending';
 }
 
+export async function getPipelineLogs(token: string, projectId: number, runId: string) {
+  // 1. Fetch jobs
+  const jobsRes = await fetch(`${GITLAB_API}/projects/${projectId}/pipelines/${runId}/jobs`, { headers: glHeaders(token) });
+  if (!jobsRes.ok) throw new Error('Failed to fetch jobs');
+  const jobs = await jobsRes.json();
+  
+  // Find failed job
+  const failedJob = jobs.find((j: any) => j.status === "failed");
+  if (!failedJob) {
+    return {
+      jobId: null,
+      jobName: "No failed job",
+      status: "success" as const,
+      logs: "All jobs completed successfully."
+    };
+  }
+
+  // 2. Fetch job trace
+  try {
+    const traceRes = await fetch(`${GITLAB_API}/projects/${projectId}/jobs/${failedJob.id}/trace`, { headers: glHeaders(token) });
+    const traceText = await traceRes.text();
+    const lines = traceText.split("\n");
+    const truncatedLogs = lines.slice(-200).join("\n");
+
+    return {
+      jobId: failedJob.id.toString(),
+      jobName: failedJob.name,
+      status: "failed" as const,
+      logs: truncatedLogs
+    };
+  } catch (err: any) {
+    return {
+      jobId: failedJob.id.toString(),
+      jobName: failedJob.name,
+      status: "failed" as const,
+      logs: `Error retrieving failed trace logs: ${err.message}`
+    };
+  }
+}
+
+export async function rerunPipeline(token: string, projectId: number, runId: string) {
+  const res = await fetch(`${GITLAB_API}/projects/${projectId}/pipelines/${runId}/retry`, {
+    method: 'POST',
+    headers: glHeaders(token)
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.message || `Failed to retry pipeline: ${res.status}`);
+  }
+}
+
 // ─── Issues as Board ───────────────────────────────────────────────────────
 
 export interface GLCard {
@@ -195,7 +375,7 @@ export async function getIssuesAsCards(token: string, projectId: number): Promis
   if (!res.ok) return [];
   const data = await res.json();
   return data.map((i: any): GLCard => ({
-    id: i.id.toString(),
+    id: i.iid.toString(),
     title: i.title,
     description: i.description ?? '',
     status: mapLabelStatus(i.labels),
@@ -205,6 +385,29 @@ export async function getIssuesAsCards(token: string, projectId: number): Promis
     assignees: (i.assignees ?? []).map((a: any) => ({ name: a.username, avatarUrl: a.avatar_url })),
     updatedAt: i.updated_at,
   }));
+}
+
+export async function moveGitLabIssue(token: string, projectId: number, issueIid: string, targetStatus: 'backlog' | 'todo' | 'inprogress' | 'done') {
+  const getRes = await fetch(`${GITLAB_API}/projects/${projectId}/issues/${issueIid}`, { headers: glHeaders(token) });
+  if (!getRes.ok) throw new Error('Failed to fetch issue labels');
+  const issue = await getRes.json();
+  
+  const existingLabels = (issue.labels ?? [])
+    .filter((n: string) => !['backlog', 'todo', 'to do', 'in progress', 'inprogress', 'wip', 'done', 'complete'].includes(n.toLowerCase()));
+
+  if (targetStatus === 'todo') existingLabels.push('todo');
+  else if (targetStatus === 'inprogress') existingLabels.push('in progress');
+  else if (targetStatus === 'done') existingLabels.push('done');
+
+  const putRes = await fetch(`${GITLAB_API}/projects/${projectId}/issues/${issueIid}`, {
+    method: 'PUT',
+    headers: glHeaders(token),
+    body: JSON.stringify({ labels: existingLabels.join(',') })
+  });
+
+  if (!putRes.ok) {
+    throw new Error(`Failed to move GitLab issue: ${putRes.status}`);
+  }
 }
 
 function mapLabelStatus(labels: string[]): GLCard['status'] {

@@ -92,6 +92,7 @@ export async function exchangeGitHubCode(code: string, codeVerifier: string): Pr
       client_secret: GITHUB_CLIENT_SECRET,
       code,
       redirect_uri: redirectUri,
+      code_verifier: codeVerifier,
     }),
   });
 
@@ -156,7 +157,7 @@ export async function exchangeGitLabCode(code: string, codeVerifier: string): Pr
 
 // ─── Jira Token Exchange ───────────────────────────────────────────────────
 
-export async function exchangeJiraCode(code: string): Promise<{ accessToken: string }> {
+export async function exchangeJiraCode(code: string, codeVerifier: string): Promise<{ accessToken: string }> {
   const redirectUri = getRedirectUri();
   const res = await fetch('https://auth.atlassian.com/oauth/token', {
     method: 'POST',
@@ -167,6 +168,7 @@ export async function exchangeJiraCode(code: string): Promise<{ accessToken: str
       code,
       grant_type: 'authorization_code',
       redirect_uri: redirectUri,
+      code_verifier: codeVerifier,
     }),
   });
 

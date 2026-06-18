@@ -145,6 +145,135 @@ export async function getPRs(token: string, fullName: string, state: 'open' | 'c
   }));
 }
 
+export interface GHPRDetail extends GHPR {
+  body: string;
+  reviewers: { username: string; state: string }[];
+  comments: {
+    id: string;
+    authorName: string;
+    authorAvatarUrl: string | null;
+    body: string;
+    createdAt: string;
+  }[];
+  files: {
+    filename: string;
+    additions: number;
+    deletions: number;
+    patch: string;
+  }[];
+}
+
+export async function getPRDetail(token: string, fullName: string, prNumber: string): Promise<GHPRDetail | null> {
+  // 1. Fetch details
+  const prRes = await fetch(`${GITHUB_API}/repos/${fullName}/pulls/${prNumber}`, { headers: ghHeaders(token) });
+  if (!prRes.ok) return null;
+  const pr = await prRes.json();
+
+  // 2. Fetch files
+  let files = [];
+  try {
+    const filesRes = await fetch(`${GITHUB_API}/repos/${fullName}/pulls/${prNumber}/files`, { headers: ghHeaders(token) });
+    if (filesRes.ok) files = await filesRes.json();
+  } catch (e) {
+    console.warn("Failed to fetch PR files", e);
+  }
+
+  // 3. Fetch reviews & comments
+  let comments: GHPRDetail['comments'] = [];
+  try {
+    const issueCommentsRes = await fetch(`${GITHUB_API}/repos/${fullName}/issues/${prNumber}/comments`, { headers: ghHeaders(token) });
+    const prCommentsRes = await fetch(`${GITHUB_API}/repos/${fullName}/pulls/${prNumber}/comments`, { headers: ghHeaders(token) });
+    
+    const issueComments = issueCommentsRes.ok ? await issueCommentsRes.json() : [];
+    const prComments = prCommentsRes.ok ? await prCommentsRes.json() : [];
+    
+    comments = [...issueComments, ...prComments].map((c: any) => ({
+      id: c.id.toString(),
+      authorName: c.user?.login ?? "Unknown",
+      authorAvatarUrl: c.user?.avatar_url ?? null,
+      body: c.body,
+      createdAt: c.created_at
+    }));
+    comments.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  } catch (e) {
+    console.warn("Failed to fetch PR comments", e);
+  }
+
+  // 4. Fetch checks status
+  let checksStatus: GHPRDetail['checksStatus'] = "none";
+  try {
+    const statusesRes = await fetch(`${GITHUB_API}/repos/${fullName}/commits/${pr.head?.sha}/status`, { headers: ghHeaders(token) });
+    const checkRunsRes = await fetch(`${GITHUB_API}/repos/${fullName}/commits/${pr.head?.sha}/check-runs`, { headers: ghHeaders(token) });
+    
+    const statuses = statusesRes.ok ? await statusesRes.json() : { state: 'unknown' };
+    const checkRuns = checkRunsRes.ok ? await checkRunsRes.json() : { check_runs: [], total_count: 0 };
+    
+    const hasFailure = (statuses.state === "failure") || checkRuns.check_runs?.some((cr: any) => cr.conclusion === "failure");
+    const hasPending = (statuses.state === "pending") || checkRuns.check_runs?.some((cr: any) => cr.status === "in_progress" || cr.status === "queued");
+    const hasSuccess = (statuses.state === "success") || (checkRuns.total_count > 0 && checkRuns.check_runs?.every((cr: any) => cr.conclusion === "success" || cr.conclusion === "skipped"));
+
+    if (hasFailure) checksStatus = "failing";
+    else if (hasPending) checksStatus = "pending";
+    else if (hasSuccess) checksStatus = "passing";
+  } catch (e) {
+    console.warn("Failed to fetch PR checks", e);
+  }
+
+  return {
+    id: pr.id.toString(),
+    number: pr.number,
+    title: pr.title,
+    body: pr.body || "No description provided.",
+    state: pr.draft ? 'draft' : pr.merged_at ? 'merged' : pr.state === 'closed' ? 'closed' : 'open',
+    authorName: pr.user?.login || "Unknown",
+    authorAvatarUrl: pr.user?.avatar_url || null,
+    createdAt: pr.created_at,
+    updatedAt: pr.updated_at,
+    checksStatus,
+    reviewers: (pr.requested_reviewers || []).map((r: any) => ({
+      username: r.login,
+      state: "PENDING"
+    })),
+    comments,
+    files: files.map((f: any) => ({
+      filename: f.filename,
+      additions: f.additions,
+      deletions: f.deletions,
+      patch: f.patch || ""
+    }))
+  };
+}
+
+export async function approvePR(token: string, fullName: string, prNumber: string) {
+  const res = await fetch(`${GITHUB_API}/repos/${fullName}/pulls/${prNumber}/reviews`, {
+    method: 'POST',
+    headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'APPROVE', body: 'Approved via gitCube standalone' })
+  });
+  if (!res.ok) throw new Error(`Approve failed: ${res.status}`);
+}
+
+export async function requestChangesPR(token: string, fullName: string, prNumber: string, comment: string) {
+  const res = await fetch(`${GITHUB_API}/repos/${fullName}/pulls/${prNumber}/reviews`, {
+    method: 'POST',
+    headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'REQUEST_CHANGES', body: comment || 'Changes requested via gitCube standalone' })
+  });
+  if (!res.ok) throw new Error(`Request changes failed: ${res.status}`);
+}
+
+export async function mergePR(token: string, fullName: string, prNumber: string, mergeMethod: 'merge' | 'squash' | 'rebase' = 'merge') {
+  const res = await fetch(`${GITHUB_API}/repos/${fullName}/pulls/${prNumber}/merge`, {
+    method: 'PUT',
+    headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ merge_method: mergeMethod })
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.message || `Merge failed: ${res.status}`);
+  }
+}
+
 // ─── CI / Actions Runs ──────────────────────────────────────────────────────
 
 export interface GHPipeline {
@@ -178,6 +307,59 @@ function mapRunStatus(conclusion: string | null, status: string): GHPipeline['st
   if (conclusion === 'failure' || conclusion === 'cancelled') return 'failed';
   if (status === 'queued') return 'pending';
   return 'pending';
+}
+
+export async function getPipelineLogs(token: string, fullName: string, runId: string) {
+  // 1. Fetch jobs
+  const jobsRes = await fetch(`${GITHUB_API}/repos/${fullName}/actions/runs/${runId}/jobs`, { headers: ghHeaders(token) });
+  if (!jobsRes.ok) throw new Error('Failed to fetch jobs');
+  const jobsData = await jobsRes.json();
+  const jobs = jobsData.jobs || [];
+
+  const failedJob = jobs.find((j: any) => j.conclusion === "failure");
+  if (!failedJob) {
+    return {
+      jobId: null,
+      jobName: "No failed job",
+      status: "success" as const,
+      logs: "All jobs completed successfully."
+    };
+  }
+
+  try {
+    const logRes = await fetch(`${GITHUB_API}/repos/${fullName}/actions/jobs/${failedJob.id}/logs`, {
+      headers: { ...ghHeaders(token), 'Accept': 'application/vnd.github+json' }
+    });
+    const logText = await logRes.text();
+    const lines = logText.split('\n');
+    const truncatedLogs = lines.slice(-200).join('\n');
+    
+    return {
+      jobId: failedJob.id.toString(),
+      jobName: failedJob.name,
+      status: "failed" as const,
+      logs: truncatedLogs
+    };
+  } catch (err: any) {
+    return {
+      jobId: failedJob.id.toString(),
+      jobName: failedJob.name,
+      status: "failed" as const,
+      logs: `Error retrieving failed logs: ${err.message}. Please view logs directly on GitHub.`
+    };
+  }
+}
+
+export async function rerunPipeline(token: string, fullName: string, runId: string) {
+  const res = await fetch(`${GITHUB_API}/repos/${fullName}/actions/runs/${runId}/rerun`, {
+    method: 'POST',
+    headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({})
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.message || `Failed to re-run pipeline: ${res.status}`);
+  }
 }
 
 // ─── Notifications ──────────────────────────────────────────────────────────
@@ -278,7 +460,7 @@ export async function getIssuesAsCards(token: string, fullName: string): Promise
   return data
     .filter((i: any) => !i.pull_request) // exclude PRs from issues list
     .map((i: any): GHCard => ({
-      id: i.id.toString(),
+      id: i.number.toString(),
       title: i.title,
       description: i.body ?? '',
       status: mapIssueStatus(i.labels),
@@ -288,6 +470,30 @@ export async function getIssuesAsCards(token: string, fullName: string): Promise
       assignees: (i.assignees ?? []).map((a: any) => ({ name: a.login, avatarUrl: a.avatar_url })),
       updatedAt: i.updated_at,
     }));
+}
+
+export async function moveGitHubIssue(token: string, fullName: string, issueNumber: string, targetStatus: 'backlog' | 'todo' | 'inprogress' | 'done') {
+  // Fetch current labels to preserve non-status labels
+  const getRes = await fetch(`${GITHUB_API}/repos/${fullName}/issues/${issueNumber}`, { headers: ghHeaders(token) });
+  if (!getRes.ok) throw new Error('Failed to fetch issue labels');
+  const issue = await getRes.json();
+  const existingLabels = (issue.labels ?? [])
+    .map((l: any) => l.name)
+    .filter((n: string) => !['backlog', 'todo', 'to do', 'ready', 'in progress', 'inprogress', 'wip', 'done', 'complete'].includes(n.toLowerCase()));
+
+  if (targetStatus === 'todo') existingLabels.push('todo');
+  else if (targetStatus === 'inprogress') existingLabels.push('in progress');
+  else if (targetStatus === 'done') existingLabels.push('done');
+
+  const patchRes = await fetch(`${GITHUB_API}/repos/${fullName}/issues/${issueNumber}`, {
+    method: 'PATCH',
+    headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ labels: existingLabels })
+  });
+
+  if (!patchRes.ok) {
+    throw new Error(`Failed to move issue: ${patchRes.status}`);
+  }
 }
 
 function mapIssueStatus(labels: any[]): GHCard['status'] {

@@ -7,6 +7,7 @@ import { getToken, isLoggedIn } from '../../src/api/auth';
 import * as GH from '../../src/api/github';
 import * as GL from '../../src/api/gitlab';
 import { useBoundStore } from '../../src/store';
+import { AI_PROXY_URL } from '../../src/constants/api';
 
 interface PR {
   id: string;
@@ -94,15 +95,20 @@ const Dashboard = () => {
       );
     } else if (repo && glToken && repo.provider === 'gitlab') {
       promises.push(
-        GL.getRepos(glToken).then(repos => {
-          const glRepo = repos.find(r => r.id === repo.id);
-          if (glRepo) {
-            return Promise.all([
-              GL.getMRs(glToken, glRepo.numericId, 'all').then(data => setPrs(data as any)),
-              GL.getPipelines(glToken, glRepo.numericId).then(data => setPipelines(data as any)),
-            ]);
+        (async () => {
+          try {
+            const repos = await GL.getRepos(glToken);
+            const glRepo = repos.find(r => r.id === repo.id);
+            if (glRepo) {
+              await Promise.all([
+                GL.getMRs(glToken, glRepo.numericId, 'all').then(data => setPrs(data as any)),
+                GL.getPipelines(glToken, glRepo.numericId).then(data => setPipelines(data as any)),
+              ]);
+            }
+          } catch (err) {
+            console.error('Fetch GitLab dashboard failed:', err);
           }
-        }).catch(err => console.error('Fetch GitLab dashboard failed:', err))
+        })()
       );
     } else {
       setPrs([]);
@@ -220,17 +226,43 @@ const Dashboard = () => {
     setAiLoading(true);
     setSummarizedPrNumber(prNumber);
     try {
-      const res = await fetch(getApiUrl(`/api/git/prs/${selectedRepo.provider}/${prNumber}/summarize`), {
+      // Fetch diff from provider first
+      let fullDiff = "";
+      if (selectedRepo.provider === 'github') {
+        const detail = await GH.getPRDetail(sessionToken, selectedRepo.id, prNumber.toString()) as any;
+        if (detail && detail.files) {
+          fullDiff = detail.files.map((f: any) => `--- a/${f.filename}\n+++ b/${f.filename}\n${f.patch}`).join("\n");
+        }
+      } else if (selectedRepo.provider === 'gitlab') {
+        const detail = await GL.getPRDetail(sessionToken, parseInt(selectedRepo.id, 10), prNumber.toString()) as any;
+        if (detail && detail.files) {
+          fullDiff = detail.files.map((f: any) => `--- a/${f.filename}\n+++ b/${f.filename}\n${f.patch}`).join("\n");
+        }
+      }
+
+      if (!fullDiff) throw new Error("No code changes found to summarize.");
+
+      // Call Cloudflare AI Proxy directly
+      const res = await fetch(`${AI_PROXY_URL}/summarize`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionToken}`
+          'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ repoId: selectedRepo.id })
+        body: JSON.stringify({ diffText: fullDiff })
       });
+      
+      if (!res.ok) {
+         let errMsg = `AI Proxy returned status ${res.status}`;
+         try {
+           const errData = await res.json();
+           if (errData.error) errMsg = errData.error;
+         } catch(e) {}
+         throw new Error(errMsg);
+      }
+      
       const data = await res.json();
-      if (res.ok) {
-        setAiSummary(data.summary);
+      if (data.result) {
+        setAiSummary(data.result);
       } else {
         throw new Error(data.error || 'Failed to summarize PR');
       }

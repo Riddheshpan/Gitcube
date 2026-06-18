@@ -1,0 +1,34 @@
+# EAS Build ignore file
+# Mirrors .gitignore plus local-only generated folders
+
+node_modules/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Generated native folders (EAS generates these in the cloud)
+android/
+ios/
+
+# Gradle build artifacts
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+
+# Local env files
+.env*.local
+
+# Debug logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+
+# TypeScript
+*.tsbuildinfo
+
+app-example

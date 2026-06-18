@@ -4,7 +4,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
-import { getApiUrl } from '../src/constants/api';
+import { moveGitHubIssue } from '../src/api/github';
+import { moveGitLabIssue } from '../src/api/gitlab';
 
 interface CardAssignee {
   name: string;
@@ -41,39 +42,21 @@ export default function TicketDetailScreen() {
 
   const [status, setStatus] = useState(initialStatus);
   const [transitionLoading, setTransitionLoading] = useState(false);
-  const [sessionToken, setSessionToken] = useState<string | null>(null);
-
-  useEffect(() => {
-    const getSession = async () => {
-      const token = Platform.OS === 'web'
-        ? localStorage.getItem('user_token')
-        : await SecureStore.getItemAsync('user_token');
-      setSessionToken(token);
-    };
-    getSession();
-  }, []);
 
   const handleTransition = async (targetStatus: 'backlog' | 'todo' | 'inprogress' | 'done') => {
-    if (!sessionToken) return;
     setTransitionLoading(true);
 
     try {
-      const res = await fetch(getApiUrl(`/api/boards/cards/${provider}/move`), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionToken}`
-        },
-        body: JSON.stringify({
-          boardId: boardId,
-          cardId: id,
-          status: targetStatus
-        })
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to transition status');
+      if (provider === 'github') {
+        const ghToken = Platform.OS === 'web' ? localStorage.getItem('github_token') : await SecureStore.getItemAsync('github_token');
+        if (!ghToken) throw new Error("GitHub token not found. Please reconnect your account.");
+        await moveGitHubIssue(ghToken, boardId, id, targetStatus);
+      } else if (provider === 'gitlab') {
+        const glToken = Platform.OS === 'web' ? localStorage.getItem('gitlab_token') : await SecureStore.getItemAsync('gitlab_token');
+        if (!glToken) throw new Error("GitLab token not found. Please reconnect your account.");
+        await moveGitLabIssue(glToken, parseInt(boardId, 10), id, targetStatus);
+      } else {
+        throw new Error(`Direct status updates for ${provider} are not yet supported in serverless mode.`);
       }
 
       setStatus(targetStatus);
