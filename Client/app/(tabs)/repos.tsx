@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, SafeAreaView, ScrollView, Pressable, StyleSheet, ActivityIndicator, Platform, RefreshControl, Image, TextInput } from 'react-native';
+import { View, Text, SafeAreaView, ScrollView, Pressable, StyleSheet, ActivityIndicator, Platform, RefreshControl, Image, TextInput, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useColorScheme } from 'nativewind';
 import { useRouter } from 'expo-router';
@@ -328,7 +328,7 @@ export default function ReposScreen() {
             <Ionicons name="chatbubble-outline" size={12} color={textSub} />
             <Text style={ss.commentsText}>{pr.commentsCount || 0}</Text>
           </View>
-          <Text style={{ color: isDark ? '#444' : '#bbb', fontSize: 11 }}>#{pr.number}</Text>
+          <Text style={{ color: isDark ? '#888' : '#6b7280', fontSize: 11 }}>#{pr.number}</Text>
         </View>
 
         <View style={[ss.listItemBottom, { borderTopColor: isDark ? '#242424' : '#f0f0f0' }]}>
@@ -336,7 +336,7 @@ export default function ReposScreen() {
 
           <View style={[ss.diffStats, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)' }]}>
             <Text style={ss.additionsText}>+{pr.additions || 0}</Text>
-            <Text style={{ color: isDark ? '#444' : '#ccc', fontSize: 12, fontWeight: '700' }}>/</Text>
+            <Text style={{ color: isDark ? '#888' : '#6b7280', fontSize: 12, fontWeight: '700' }}>/</Text>
             <Text style={ss.deletionsText}>-{pr.deletions || 0}</Text>
           </View>
 
@@ -683,106 +683,78 @@ export default function ReposScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: bgPage }}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
 
-      {/* Header Selector Bar */}
-      <View style={[ss.headerSelector, { backgroundColor: 'transparent', borderBottomWidth: 0, paddingBottom: 0 }]}>
-        {selectedRepo ? (
-          <Pressable 
-            style={({ pressed }) => [ss.headerCard, { opacity: pressed ? 0.95 : 1 }]}
+      {/* Header with Repo Picker (Matching Boards style) */}
+      <View className="bg-white dark:bg-[#1a1a1a] px-4 pt-12 pb-4 border-b border-black/10 dark:border-yellow-500/10">
+        <View className="flex-row justify-between items-center">
+          <TouchableOpacity 
+            className="flex-row items-center bg-gray-100 dark:bg-[#262626] px-4 py-2.5 rounded-xl border border-black/5 dark:border-white/10"
             onPress={() => setShowRepoDropdown(!showRepoDropdown)}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-              {selectedRepo.ownerAvatarUrl ? (
-                <Image source={{ uri: selectedRepo.ownerAvatarUrl }} style={ss.avatarSquare} />
-              ) : (
-                <View style={ss.avatarSquare}>
-                  <Text style={ss.avatarSquareText}>
-                    {selectedRepo.name.charAt(0).toUpperCase()}
-                  </Text>
-                </View>
-              )}
-              <View style={ss.repoInfo}>
-                <Text style={ss.repoName} numberOfLines={1}>
-                  {selectedRepo.fullName}
-                </Text>
-                <Text style={ss.repoSubtitle} numberOfLines={1}>
-                  {selectedRepo.provider === 'gitlab' ? 'gitlab.com' : 'github.com'} • {prCounts.open} open PR{prCounts.open !== 1 ? 's' : ''}
-                </Text>
-              </View>
-            </View>
-            <Ionicons name={showRepoDropdown ? "chevron-up" : "chevron-down"} size={20} color={textMain} />
-          </Pressable>
-        ) : (
-          <View style={[ss.rowBetween, { width: '100%' }]}>
-            {/* Dropdown Repo Trigger for Dashboard Welcome Screen */}
-            <Pressable 
-              style={({ pressed }) => [ss.dropdownTrigger, { backgroundColor: isDark ? '#262626' : '#f3f4f6', borderColor: borderCard, opacity: pressed ? 0.9 : 1 }]}
-              onPress={() => setShowRepoDropdown(!showRepoDropdown)}
-            >
-              <Ionicons 
-                name="git-branch-outline" 
-                size={18} 
-                color={isDark ? '#fff' : '#000'} 
-                style={{ marginRight: 8 }} 
-              />
-              <Text style={[ss.dropdownTriggerText, { color: textMain }]} numberOfLines={1}>
-                Select Repository
-              </Text>
-              <Ionicons name="chevron-down" size={14} color={textSub} style={{ marginLeft: 8 }} />
-            </Pressable>
-          </View>
-        )}
+            <Ionicons 
+              name={selectedRepo?.provider === 'gitlab' ? 'logo-gitlab' : 'git-branch'} 
+              size={18} 
+              color={selectedRepo?.provider === 'gitlab' ? '#fc6d26' : (isDark ? '#fff' : '#000')} 
+              style={{ marginRight: 8 }} 
+            />
+            <Text className="text-black dark:text-white font-bold text-sm max-w-[200px]" numberOfLines={1}>
+              {selectedRepo?.name || 'Select Repository'}
+            </Text>
+            <Ionicons name="chevron-down" size={14} color="#888" style={{ marginLeft: 8 }} />
+          </TouchableOpacity>
 
-        {/* Repositories Dropdown Panel */}
+          <TouchableOpacity 
+            className="p-2.5 bg-gray-100 dark:bg-[#2d2d2d] rounded-xl border border-black/5 dark:border-transparent"
+            onPress={handleRefresh}
+            disabled={refreshing}
+          >
+            {refreshing ? (
+              <ActivityIndicator size="small" color="#888" />
+            ) : (
+              <Ionicons name="refresh" size={18} className="text-black dark:text-white" color={isDark ? '#fff' : '#000'} />
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Repo Selection Dropdown List */}
         {showRepoDropdown && (
-          <View style={[ss.dropdownList, { backgroundColor: bgCard, borderColor: borderCard, top: selectedRepo ? 78 : 56 }]}>
-            <ScrollView style={{ maxHeight: 250 }} nestedScrollEnabled={true}>
-              {/* Home option to return to dashboard */}
-              {selectedRepo && (
-                <Pressable
-                  style={({ pressed }) => [ss.dropdownItem, { borderBottomColor: isDark ? '#222' : '#f3f4f6', backgroundColor: pressed ? (isDark ? '#262626' : '#f9fafb') : 'transparent' }]}
-                  onPress={() => {
-                    setSelectedRepo(null);
-                    setShowRepoDropdown(false);
-                  }}
-                >
-                  <View style={[ss.row, { flex: 1 }]}>
-                    <View style={[ss.avatarMiniFallback, { backgroundColor: '#444' }]}>
-                      <Ionicons name="home-outline" size={14} color="#fff" />
-                    </View>
-                    <View style={{ marginLeft: 10, flex: 1 }}>
-                      <Text style={{ color: textMain, fontWeight: '600', fontSize: 14 }}>Dashboard</Text>
-                      <Text style={{ color: textSub, fontSize: 11, marginTop: 1 }}>Go to welcome screen</Text>
-                    </View>
-                  </View>
-                </Pressable>
-              )}
-              {repos.map(r => (
-                <Pressable 
-                  key={r.id + r.provider}
-                  style={({ pressed }) => [ss.dropdownItem, { borderBottomColor: isDark ? '#222' : '#f3f4f6', backgroundColor: pressed ? (isDark ? '#262626' : '#f9fafb') : 'transparent' }]}
-                  onPress={() => handleSelectRepo(r)}
-                >
-                  <View style={[ss.row, { flex: 1 }]}>
-                    {r.ownerAvatarUrl ? (
-                      <Image source={{ uri: r.ownerAvatarUrl }} style={ss.avatarMini} />
-                    ) : (
-                      <View style={[ss.avatarMiniFallback, { backgroundColor: r.provider === 'gitlab' ? '#fc6d26' : '#444' }]}>
-                        <Text style={ss.avatarMiniFallbackText}>{r.name.charAt(0).toUpperCase()}</Text>
-                      </View>
-                    )}
-                    <View style={{ marginLeft: 10, flex: 1 }}>
-                      <Text style={{ color: textMain, fontWeight: '600', fontSize: 14 }}>{r.name}</Text>
-                      <Text style={{ color: textSub, fontSize: 11, marginTop: 1 }}>{r.fullName}</Text>
-                    </View>
-                  </View>
-                  <Ionicons 
-                    name={r.provider === 'gitlab' ? 'logo-gitlab' : 'logo-github'} 
-                    size={16} 
-                    color={r.provider === 'gitlab' ? '#fc6d26' : textSub} 
-                  />
-                </Pressable>
-              ))}
-            </ScrollView>
+          <View className="bg-white dark:bg-[#2d2d2d] mt-2 rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-sm">
+            {selectedRepo && (
+              <TouchableOpacity
+                className="px-4 py-3 flex-row items-center border-b border-black/5 dark:border-white/5 active:bg-gray-50 dark:active:bg-[#333333]"
+                onPress={() => {
+                  setSelectedRepo(null);
+                  setShowRepoDropdown(false);
+                }}
+              >
+                <Ionicons name="home-outline" size={16} color="#888" style={{ marginRight: 10 }} />
+                <View className="flex-1">
+                  <Text className="text-black dark:text-white font-semibold text-sm">Dashboard</Text>
+                  <Text className="text-gray-500 dark:text-gray-400 text-xs mt-0.5">Go to welcome screen</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+            
+            {repos.map(r => (
+              <TouchableOpacity 
+                key={r.id + r.provider}
+                className="px-4 py-3 flex-row items-center border-b border-black/5 dark:border-white/5 active:bg-gray-50 dark:active:bg-[#333333]"
+                onPress={() => handleSelectRepo(r)}
+              >
+                <Ionicons 
+                  name={r.provider === 'gitlab' ? 'logo-gitlab' : 'logo-github'} 
+                  size={16} 
+                  color={r.provider === 'gitlab' ? '#fc6d26' : (isDark ? '#fff' : '#000')} 
+                  style={{ marginRight: 10 }} 
+                />
+                <View className="flex-1">
+                  <Text className="text-black dark:text-white font-semibold text-sm">{r.name}</Text>
+                  <Text className="text-gray-500 dark:text-gray-400 text-xs mt-0.5">{r.fullName}</Text>
+                </View>
+                {selectedRepo?.id === r.id && selectedRepo?.provider === r.provider && (
+                  <Ionicons name="checkmark" size={16} color="#eab308" />
+                )}
+              </TouchableOpacity>
+            ))}
           </View>
         )}
       </View>
@@ -791,104 +763,55 @@ export default function ReposScreen() {
       {!selectedRepo ? (
         /* ==================== DASHBOARD WELCOME VIEW ==================== */
         <ScrollView 
-          style={{ flex: 1 }}
+          className="flex-1 bg-white dark:bg-[#121212]"
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 20, paddingBottom: 40 }}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#F5C518" />
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#eab308" />
           }
         >
-          {/* Header */}
-          <View style={[ss.row, { marginBottom: 16 }]}>
-            <Ionicons name="bar-chart-outline" size={20} color={textMain} />
-            <Text style={[ss.sectionTitle, { color: textMain, marginLeft: 8 }]}>Developer Dashboard</Text>
-          </View>
-
-          {/* Contribution Grid */}
-          <View style={[ss.card, { backgroundColor: bgCard, borderColor: borderCard }]}>
-            <View style={[ss.rowBetween, { marginBottom: 16 }]}>
-              <View>
-                <Text style={ss.bigNumber}>2,847</Text>
-                <Text style={[ss.smallLabel, { color: textSub }]}>contributions in the last year</Text>
-              </View>
-              <Text style={{ fontSize: 20 }}>🔥 312 days</Text>
-            </View>
-
-            {/* Month titles */}
-            <View style={[ss.rowBetween, { marginBottom: 8, paddingHorizontal: 2 }]}>
-              {months.map((m, idx) => (
-                <Text key={idx} style={[ss.monthLabel, { color: isDark ? '#555555' : '#9ca3af' }]}>{m}</Text>
-              ))}
-            </View>
-
-            {/* Grid display */}
-            <View style={[ss.rowBetween, { marginBottom: 8 }]}>
-              {Array.from({ length: COLS }).map((_, colIdx) => (
-                <View key={colIdx} style={ss.gridCol}>
-                  {Array.from({ length: ROWS }).map((_, rowIdx) => {
-                    const cell = gridData[colIdx][rowIdx];
-                    const colors = getCellColor(cell.level);
-                    const isSelected = selectedCell?.col === colIdx && selectedCell?.row === rowIdx;
-
-                    return (
-                      <Pressable
-                        key={rowIdx}
-                        onPress={() => setSelectedCell({ col: colIdx, row: rowIdx })}
-                        style={{
-                          width: 21,
-                          height: 21,
-                          borderRadius: 4,
-                          backgroundColor: colors.bg,
-                          borderWidth: 1,
-                          borderColor: isSelected ? '#ffffff' : colors.border,
-                          marginBottom: 3,
-                        }}
-                      />
-                    );
-                  })}
-                </View>
-              ))}
-            </View>
-
-            {/* Legend */}
-            <View style={[ss.row, { justifyContent: 'flex-end', gap: 4 }]}>
-              <Text style={[ss.smallLabel, { color: textSub }]}>Less</Text>
-              {[0, 1, 2, 3, 4, 5].map((lv) => (
-                <View key={lv} style={{ width: 12, height: 12, borderRadius: 2, backgroundColor: getCellColor(lv).bg }} />
-              ))}
-              <Text style={[ss.smallLabel, { color: textSub }]}>More</Text>
+          <View className="mb-6 mt-3 flex-row items-center">
+            <Ionicons name="git-network-outline" size={24} color={isDark ? "white" : "black"} />
+            <View className="border-b-4 border-yellow-500 pb-1 ml-3 flex-1">
+              <Text className="text-2xl font-black text-black dark:text-white tracking-tighter">Connected Workspaces</Text>
             </View>
           </View>
 
-          {/* Selected Cell Tooltip */}
-          {selectedCellDetails && (
-            <View style={[ss.tooltip, { borderColor: '#F5C518', backgroundColor: isDark ? '#1a1a1a' : '#ffffff' }]}>
-              <View style={[ss.rowBetween, { marginBottom: 8 }]}>
-                <Text style={{ color: textSub, fontSize: 12, fontWeight: 'bold' }}>{selectedCellDetails.date}</Text>
-                <Pressable onPress={() => setSelectedCell(null)}>
-                  <Ionicons name="close" size={16} color={textSub} />
-                </Pressable>
-              </View>
-              <Text style={{ color: '#F5C518', fontWeight: 'bold', fontSize: 14 }}>⚡ {selectedCellDetails.commits} commits</Text>
-              {selectedCellDetails.prs > 0 && <Text style={{ color: '#4CAF50', fontWeight: '600', fontSize: 12 }}>✓ PR merged</Text>}
-              {selectedCellDetails.ci > 0 && <Text style={{ color: '#f44336', fontWeight: '600', fontSize: 12 }}>✗ CI failure detected</Text>}
+          <Text className="text-gray-500 dark:text-gray-400 text-sm font-semibold mb-6">
+            Select a repository below to inspect pull requests, branch history, and CI pipelines.
+          </Text>
+
+          {repos.length === 0 ? (
+            <View className="py-10 items-center border-2 border-dashed border-gray-300 dark:border-gray-800 rounded-3xl bg-gray-50 dark:bg-[#1a1a1a]">
+              <Ionicons name="git-compare-outline" size={48} color="#888" className="mb-4" />
+              <Text className="text-black dark:text-white text-lg font-bold mb-2">No Repositories</Text>
+              <Text className="text-gray-400 text-center px-8 text-sm">
+                Connect your GitHub or GitLab accounts in the settings to get started.
+              </Text>
+            </View>
+          ) : (
+            <View>
+              {repos.map((repo) => (
+                <TouchableOpacity
+                  key={repo.id + repo.provider}
+                  className="bg-white dark:bg-[#1e1e1e] border-2 border-black dark:border-yellow-500 rounded-3xl p-4 mb-4 shadow-xs flex-row items-center"
+                  onPress={() => handleSelectRepo(repo)}
+                  activeOpacity={0.7}
+                >
+                  <View className="border-2 border-black dark:border-gray-600 rounded-2xl w-14 h-14 items-center justify-center mr-4 bg-gray-50 dark:bg-[#1a1a1a]">
+                    <Ionicons name={repo.provider === 'github' ? 'logo-github' : 'logo-gitlab'} size={28} color={isDark ? "#fff" : "#000"} />
+                  </View>
+                  <View className="flex-1 mr-2">
+                    <Text className="text-black dark:text-white text-lg font-black tracking-tight mb-1">{repo.name}</Text>
+                    <Text className="text-gray-500 dark:text-gray-400 text-xs font-semibold" numberOfLines={1}>{repo.fullName}</Text>
+                  </View>
+                  <View className="bg-yellow-500 rounded-full w-8 h-8 items-center justify-center border-2 border-black">
+                    <Ionicons name="arrow-forward" size={16} color="black" />
+                  </View>
+                </TouchableOpacity>
+              ))}
             </View>
           )}
-
-          {/* Select prompt */}
-          <View style={[ss.card, { backgroundColor: bgCard, borderColor: borderCard, alignItems: 'center', paddingVertical: 32 }]}>
-            <Ionicons name="search-outline" size={36} color="#F5C518" style={{ marginBottom: 12 }} />
-            <Text style={{ color: textMain, fontWeight: 'bold', fontSize: 16, marginBottom: 6 }}>Ready to browse repository code?</Text>
-            <Text style={{ color: textSub, fontSize: 13, textAlign: 'center', paddingHorizontal: 20, marginBottom: 20, lineHeight: 18 }}>
-              Select one of your connected repositories using the dropdown at the top to inspect pull requests, commit histories, branches, and pipelines.
-            </Text>
-            <Pressable 
-              style={({ pressed }) => [ss.button, { backgroundColor: '#F5C518', paddingHorizontal: 24, opacity: pressed ? 0.8 : 1 }]}
-              onPress={() => setShowRepoDropdown(true)}
-            >
-              <Text style={{ color: '#111', fontWeight: 'bold' }}>Choose Repository</Text>
-            </Pressable>
-          </View>
         </ScrollView>
       ) : (
         /* ==================== REPOSITORY SELECTED VIEW ==================== */

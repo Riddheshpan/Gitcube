@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, ActivityIndicator, Platform, Alert, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useColorScheme } from 'nativewind';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { getToken, isLoggedIn } from '../../src/api/auth';
 import * as GH from '../../src/api/github';
 
@@ -41,6 +42,8 @@ const COLUMNS = [
 ];
 
 export default function BoardsScreen() {
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [cardsLoading, setCardsLoading] = useState(false);
@@ -114,6 +117,15 @@ export default function BoardsScreen() {
       setLoading(false);
     }
   };
+
+  // Auto-refresh cards when screen comes back into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (sessionToken && selectedBoard) {
+        fetchCards(sessionToken, selectedBoard);
+      }
+    }, [sessionToken, selectedBoard?.id])
+  );
 
   const handleSelectBoard = (board: Board) => {
     setSelectedBoard(board);
@@ -216,10 +228,10 @@ export default function BoardsScreen() {
   return (
     <SafeAreaView className="flex-1 bg-[#eeeeee] dark:bg-[#121212]">
       {/* Header with Board Picker */}
-      <View className="bg-[#1e1e1e] dark:bg-[#1a1a1a] px-4 pt-12 pb-4 border-b border-black/10 dark:border-yellow-500/10">
+      <View className="bg-white dark:bg-[#1a1a1a] px-4 pt-12 pb-4 border-b border-black/10 dark:border-yellow-500/10">
         <View className="flex-row justify-between items-center">
           <TouchableOpacity 
-            className="flex-row items-center bg-[#2d2d2d] dark:bg-[#262626] px-4 py-2.5 rounded-xl border border-white/10"
+            className="flex-row items-center bg-gray-100 dark:bg-[#262626] px-4 py-2.5 rounded-xl border border-black/5 dark:border-white/10"
             onPress={() => setShowBoardDropdown(!showBoardDropdown)}
           >
             <Ionicons 
@@ -232,36 +244,37 @@ export default function BoardsScreen() {
               color={
                 selectedBoard?.provider === 'jira' ? '#3b82f6' :
                 selectedBoard?.provider === 'trello' ? '#00aecc' :
-                selectedBoard?.provider === 'github_projects' ? '#8b5cf6' : '#fff'
+                selectedBoard?.provider === 'github_projects' ? '#8b5cf6' : 
+                (Platform.OS === 'web' ? 'inherit' : undefined) // fallback
               } 
               style={{ marginRight: 8 }} 
             />
-            <Text className="text-white font-bold text-sm max-w-[200px]" numberOfLines={1}>
+            <Text className="text-black dark:text-white font-bold text-sm max-w-[200px]" numberOfLines={1}>
               {selectedBoard?.name}
             </Text>
             <Ionicons name="chevron-down" size={14} color="#888" style={{ marginLeft: 8 }} />
           </TouchableOpacity>
 
           <TouchableOpacity 
-            className="p-2.5 bg-[#2d2d2d] rounded-xl"
+            className="p-2.5 bg-gray-100 dark:bg-[#2d2d2d] rounded-xl border border-black/5 dark:border-transparent"
             onPress={() => selectedBoard && sessionToken && fetchCards(sessionToken, selectedBoard)}
             disabled={cardsLoading}
           >
             {cardsLoading ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color="#888" />
             ) : (
-              <Ionicons name="refresh" size={18} color="#fff" />
+              <Ionicons name="refresh" size={18} color={isDark ? '#fff' : '#000'} />
             )}
           </TouchableOpacity>
         </View>
 
         {/* Board Selection Dropdown List */}
         {showBoardDropdown && (
-          <View className="bg-[#2d2d2d] mt-2 rounded-xl overflow-hidden border border-white/10">
+          <View className="bg-white dark:bg-[#2d2d2d] mt-2 rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-sm">
             {boards.map(b => (
               <TouchableOpacity 
                 key={b.id + b.provider}
-                className="px-4 py-3 flex-row items-center border-b border-white/5 active:bg-[#333333]"
+                className="px-4 py-3 flex-row items-center border-b border-black/5 dark:border-white/5 active:bg-gray-50 dark:active:bg-[#333333]"
                 onPress={() => handleSelectBoard(b)}
               >
                 <Ionicons 
@@ -274,13 +287,14 @@ export default function BoardsScreen() {
                   color={
                     b.provider === 'jira' ? '#3b82f6' :
                     b.provider === 'trello' ? '#00aecc' :
-                    b.provider === 'github_projects' ? '#8b5cf6' : '#fff'
+                    b.provider === 'github_projects' ? '#8b5cf6' : 
+                    (Platform.OS === 'web' ? 'inherit' : undefined)
                   } 
                   style={{ marginRight: 10 }} 
                 />
                 <View className="flex-1">
-                  <Text className="text-white font-semibold text-sm">{b.name}</Text>
-                  <Text className="text-gray-400 text-xs mt-0.5">{b.provider.toUpperCase()} Board</Text>
+                  <Text className="text-black dark:text-white font-semibold text-sm">{b.name}</Text>
+                  <Text className="text-gray-500 dark:text-gray-400 text-xs mt-0.5">{b.provider.toUpperCase()} Board</Text>
                 </View>
                 {selectedBoard?.id === b.id && selectedBoard?.provider === b.provider && (
                   <Ionicons name="checkmark" size={16} color="#eab308" />
@@ -404,25 +418,25 @@ export default function BoardsScreen() {
 
       {/* Sync Status Footer */}
       {selectedBoard && (
-        <View className="bg-[#1e1e1e] dark:bg-[#1a1a1a] py-2.5 px-4 flex-row justify-between items-center border-t border-black/10">
+        <View className="bg-white dark:bg-[#1a1a1a] py-2.5 px-4 flex-row justify-between items-center border-t border-black/10 dark:border-white/10">
           <View className="flex-row items-center">
             {selectedBoard.syncError ? (
               <>
                 <Ionicons name="warning-outline" size={14} color="#f87171" style={{ marginRight: 6 }} />
-                <Text className="text-red-400 text-2xs font-semibold max-w-[200px]" numberOfLines={1}>
+                <Text className="text-red-500 dark:text-red-400 text-2xs font-semibold max-w-[200px]" numberOfLines={1}>
                   Error: {selectedBoard.syncError}
                 </Text>
               </>
             ) : (
               <>
                 <Ionicons name="checkmark-circle-outline" size={14} color="#10b981" style={{ marginRight: 6 }} />
-                <Text className="text-gray-400 text-2xs">
+                <Text className="text-gray-500 dark:text-gray-400 text-2xs">
                   Synced: {selectedBoard.lastSynced ? new Date(selectedBoard.lastSynced).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : lastSynced || 'Never'}
                 </Text>
               </>
             )}
           </View>
-          <Text className="text-yellow-500 text-2xs uppercase font-extrabold tracking-widest">
+          <Text className="text-yellow-600 dark:text-yellow-500 text-2xs uppercase font-extrabold tracking-widest">
             {selectedBoard.syncError ? 'Sync Stalled' : 'Live Sync Connected'}
           </Text>
         </View>

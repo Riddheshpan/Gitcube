@@ -9,6 +9,74 @@ import { AI_PROXY_URL } from '../src/constants/api';
 import * as GH from '../src/api/github';
 import * as GL from '../src/api/gitlab';
 
+const SimpleMarkdown = ({ children, isDark }: { children: string, isDark: boolean }) => {
+  if (!children) return null;
+  const lines = children.split('\n');
+  
+  return (
+    <View>
+      {lines.map((line, idx) => {
+        // Headers
+        if (line.startsWith('# ')) {
+          return <Text key={idx} className={`text-xl font-bold mt-2 mb-1 ${isDark ? 'text-white' : 'text-black'}`}>{line.replace(/^#\s+/, '')}</Text>;
+        }
+        if (line.startsWith('## ')) {
+          return <Text key={idx} className={`text-lg font-bold mt-2 mb-1 ${isDark ? 'text-white' : 'text-black'}`}>{line.replace(/^##\s+/, '')}</Text>;
+        }
+        if (line.startsWith('### ')) {
+          return <Text key={idx} className={`text-base font-bold mt-2 mb-1 ${isDark ? 'text-white' : 'text-black'}`}>{line.replace(/^###\s+/, '')}</Text>;
+        }
+        // Lists
+        if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
+          return (
+            <View key={idx} className="flex-row items-start mb-1 pr-2">
+              <Text className={`mr-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>•</Text>
+              <Text className={`leading-5 flex-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>{renderInlineBold(line.replace(/^[-*]\s+/, ''), isDark)}</Text>
+            </View>
+          );
+        }
+        // Code Blocks
+        if (line.startsWith('```')) return null; // Very simplified
+        
+        // Empty lines
+        if (!line.trim()) return <View key={idx} className="h-2" />;
+        
+        // Normal text
+        return (
+          <Text key={idx} className={`leading-5 mb-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+            {renderInlineBold(line, isDark)}
+          </Text>
+        );
+      })}
+    </View>
+  );
+};
+
+const renderInlineBold = (text: string, isDark: boolean) => {
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return (
+        <Text key={i} className={`font-bold ${isDark ? 'text-white' : 'text-black'}`}>
+          {part.slice(2, -2)}
+        </Text>
+      );
+    }
+    // Very simple inline code
+    const codeParts = part.split(/(`.*?`)/g);
+    return codeParts.map((cPart, j) => {
+      if (cPart.startsWith('`') && cPart.endsWith('`')) {
+         return (
+           <Text key={`${i}-${j}`} className={`font-mono bg-gray-200 dark:bg-gray-800 px-1 rounded ${isDark ? 'text-yellow-500' : 'text-yellow-700'}`}>
+             {cPart.slice(1, -1)}
+           </Text>
+         );
+      }
+      return cPart;
+    });
+  });
+};
+
 interface FileChange {
   filename: string;
   additions: number;
@@ -344,15 +412,21 @@ export default function PRDetailScreen() {
   }
 
   // PR state badge config
-  let stateBadgeClasses = 'border-gray-300 bg-gray-100 text-gray-500 dark:border-gray-800 dark:bg-gray-800/20 dark:text-gray-400';
+  let stateBadgeView = 'border-gray-300 bg-gray-100 dark:border-gray-800 dark:bg-gray-800/20';
+  let stateBadgeText = 'text-gray-500 dark:text-gray-400';
+  
   if (pr.state === 'open') {
-    stateBadgeClasses = 'border-green-500 bg-green-50 text-green-600 dark:bg-green-500/10 dark:text-green-500';
+    stateBadgeView = 'border-green-500 bg-green-50 dark:bg-green-500/10';
+    stateBadgeText = 'text-green-600 dark:text-green-500';
   } else if (pr.state === 'merged') {
-    stateBadgeClasses = 'border-purple-500 bg-purple-50 text-purple-600 dark:bg-purple-500/10 dark:text-purple-400';
+    stateBadgeView = 'border-purple-500 bg-purple-50 dark:bg-purple-500/10';
+    stateBadgeText = 'text-purple-600 dark:text-purple-400';
   } else if (pr.state === 'draft') {
-    stateBadgeClasses = 'border-gray-400 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800/20 dark:text-gray-400';
+    stateBadgeView = 'border-gray-400 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/20';
+    stateBadgeText = 'text-gray-500 dark:text-gray-400';
   } else if (pr.state === 'closed') {
-    stateBadgeClasses = 'border-red-500 bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-500';
+    stateBadgeView = 'border-red-500 bg-red-50 dark:bg-red-500/10';
+    stateBadgeText = 'text-red-600 dark:text-red-500';
   }
 
   // Checks status badge config
@@ -409,8 +483,8 @@ export default function PRDetailScreen() {
         <Text className="text-black dark:text-white text-2xl font-black tracking-tight">{pr.title}</Text>
         
         <View className="flex-row items-center flex-wrap mt-3 mb-5">
-          <View className={`border rounded-full px-3 py-1 ${stateBadgeClasses}`}>
-            <Text className="text-[10px] font-black uppercase tracking-wider">{pr.state}</Text>
+          <View className={`border rounded-full px-3 py-1 ${stateBadgeView}`}>
+            <Text className={`text-[10px] font-black uppercase tracking-wider ${stateBadgeText}`}>{pr.state}</Text>
           </View>
           {pr.checksStatus !== 'none' && (
             <View className={`border rounded-full px-3 py-1.5 ml-2 flex-row items-center ${checksBadgeClasses}`}>
@@ -426,7 +500,11 @@ export default function PRDetailScreen() {
         {/* PR Description Card */}
         <View className="bg-white dark:bg-[#1e1e1e] rounded-3xl p-6 border-2 border-black/5 dark:border-white/5 shadow-xs mb-4">
           <Text className="text-gray-400 dark:text-gray-500 text-[10px] font-black uppercase tracking-wider mb-2">Description</Text>
-          <Text className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed">{pr.body || 'No description provided.'}</Text>
+          {pr.body ? (
+            <SimpleMarkdown isDark={isDark}>{pr.body}</SimpleMarkdown>
+          ) : (
+            <Text className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed">No description provided.</Text>
+          )}
         </View>
 
         {/* AI DIFF SUMMARY CARD */}
@@ -443,7 +521,7 @@ export default function PRDetailScreen() {
 
           {aiSummary ? (
             <View>
-              <Text className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed">{aiSummary}</Text>
+              <SimpleMarkdown isDark={isDark}>{aiSummary}</SimpleMarkdown>
               <TouchableOpacity 
                 className="flex-row items-center mt-4 border border-yellow-500/30 bg-yellow-500/10 px-3 py-1.5 rounded-lg self-start active:bg-yellow-500/20"
                 onPress={handleSummarizeDiff}
@@ -552,7 +630,7 @@ export default function PRDetailScreen() {
         
         {pr.comments.length === 0 ? (
           <View className="bg-white dark:bg-[#1e1e1e] border-2 border-dashed border-gray-200 dark:border-gray-800 rounded-3xl p-8 items-center justify-center shadow-xs mb-6">
-            <Ionicons name="chatbox-outline" size={28} color={isDark ? '#555' : '#888'} className="mb-2" />
+            <Ionicons name="chatbox-outline" size={28} color={isDark ? '#888' : '#888'} className="mb-2" />
             <Text className="text-gray-400 dark:text-gray-500 text-sm font-semibold">No comments on this pull request.</Text>
           </View>
         ) : (
@@ -575,7 +653,7 @@ export default function PRDetailScreen() {
                   {new Date(c.createdAt).toLocaleDateString()}
                 </Text>
               </View>
-              <Text className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed">{c.body}</Text>
+              <SimpleMarkdown isDark={isDark}>{c.body}</SimpleMarkdown>
             </View>
           ))
         )}

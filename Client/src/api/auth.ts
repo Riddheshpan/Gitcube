@@ -124,16 +124,18 @@ export async function exchangeGitHubCode(code: string, codeVerifier: string): Pr
 
 export async function exchangeGitLabCode(code: string, codeVerifier: string): Promise<{ accessToken: string; username: string }> {
   const redirectUri = getRedirectUri();
+  
+  const params = new URLSearchParams();
+  params.append('client_id', GITLAB_CLIENT_ID);
+  params.append('code', code);
+  params.append('grant_type', 'authorization_code');
+  params.append('redirect_uri', redirectUri);
+  params.append('code_verifier', codeVerifier);
+
   const res = await fetch('https://gitlab.com/oauth/token', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      client_id: GITLAB_CLIENT_ID,
-      code,
-      grant_type: 'authorization_code',
-      redirect_uri: redirectUri,
-      code_verifier: codeVerifier,
-    }),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: params.toString(),
   });
 
   const data = await res.json();

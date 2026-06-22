@@ -15,6 +15,20 @@ export default function SettingsScreen() {
   const [jiraConnected, setJiraConnected] = React.useState(false);
   const [username, setUsername] = React.useState('');
 
+  const handleToggleTheme = async () => {
+    toggleColorScheme();
+    const newTheme = isDark ? 'light' : 'dark';
+    try {
+      if (Platform.OS === 'web') {
+        localStorage.setItem('app_theme', newTheme);
+      } else {
+        await SecureStore.setItemAsync('app_theme', newTheme);
+      }
+    } catch (e) {
+      console.warn('Failed to save theme', e);
+    }
+  };
+
   useFocusEffect(
     React.useCallback(() => {
       const checkTokens = async () => {
@@ -122,7 +136,7 @@ export default function SettingsScreen() {
             trackColor={{ false: '#e5e7eb', true: '#eab308' }}
             thumbColor={isDark ? '#fff' : '#fff'}
             ios_backgroundColor="#e5e7eb"
-            onValueChange={toggleColorScheme}
+            onValueChange={handleToggleTheme}
             value={isDark}
           />
         </View>

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Platform, Alert } from 'react-native';
+import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Platform, Alert, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useColorScheme } from 'nativewind';
 import { useRouter } from 'expo-router';
 import { getToken, isLoggedIn } from '../../src/api/auth';
 import * as GH from '../../src/api/github';
 import * as GL from '../../src/api/gitlab';
+import * as SecureStore from 'expo-secure-store';
 import { useBoundStore } from '../../src/store';
 import { AI_PROXY_URL } from '../../src/constants/api';
 
@@ -76,6 +77,34 @@ const Dashboard = () => {
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [summarizedPrNumber, setSummarizedPrNumber] = useState<number | null>(null);
+
+  // Release Notes Modal State
+  const [showReleaseNotes, setShowReleaseNotes] = useState(false);
+
+  useEffect(() => {
+    const checkReleaseNotes = async () => {
+      try {
+        const hasSeen = Platform.OS === 'web' 
+          ? localStorage.getItem('has_seen_release_v1_1_0')
+          : await SecureStore.getItemAsync('has_seen_release_v1_1_0');
+        if (!hasSeen) {
+          setShowReleaseNotes(true);
+        }
+      } catch (e) {}
+    };
+    checkReleaseNotes();
+  }, []);
+
+  const handleCloseReleaseNotes = async () => {
+    setShowReleaseNotes(false);
+    try {
+      if (Platform.OS === 'web') {
+        localStorage.setItem('has_seen_release_v1_1_0', 'true');
+      } else {
+        await SecureStore.setItemAsync('has_seen_release_v1_1_0', 'true');
+      }
+    } catch (e) {}
+  };
 
   const fetchDashboardData = async (token: string, repo: any, board: any) => {
     const ghToken = await getToken('github_token');
@@ -193,10 +222,26 @@ const Dashboard = () => {
 
   // Sync data when global store repo/board changes
   useEffect(() => {
-    if (sessionToken && (selectedRepo || selectedBoard)) {
-      fetchDashboardData(sessionToken, selectedRepo, selectedBoard);
+    // Ensure selectedBoard is always synced with selectedRepo
+    if (selectedRepo && boards.length > 0) {
+      const matchingBoard = boards.find(b => b.id === selectedRepo.id);
+      if (matchingBoard && (!selectedBoard || selectedBoard.id !== matchingBoard.id)) {
+        setSelectedBoard(matchingBoard);
+        return; // wait for next render when board is synced
+      }
     }
-  }, [selectedRepo?.id, selectedRepo?.provider, selectedBoard?.id, selectedBoard?.provider, sessionToken]);
+
+    if (sessionToken && selectedRepo && selectedBoard) {
+      fetchDashboardData(sessionToken, selectedRepo, selectedBoard);
+
+      // Real-time polling every 10 seconds
+      const interval = setInterval(() => {
+        fetchDashboardData(sessionToken, selectedRepo, selectedBoard);
+      }, 10000);
+
+      return () => clearInterval(interval);
+    }
+  }, [selectedRepo?.id, selectedRepo?.provider, selectedBoard?.id, selectedBoard?.provider, sessionToken, boards]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -210,6 +255,11 @@ const Dashboard = () => {
   // Select handlers
   const handleSelectRepo = (repo: any) => {
     setSelectedRepo(repo);
+    // Auto-sync the board to match the repo
+    const matchingBoard = boards.find(b => b.id === repo.id);
+    if (matchingBoard) setSelectedBoard(matchingBoard);
+    else setSelectedBoard(null);
+
     setShowRepoDropdown(false);
     setAiSummary(null);
     setSummarizedPrNumber(null);
@@ -250,16 +300,16 @@ const Dashboard = () => {
         },
         body: JSON.stringify({ diffText: fullDiff })
       });
-      
+
       if (!res.ok) {
-         let errMsg = `AI Proxy returned status ${res.status}`;
-         try {
-           const errData = await res.json();
-           if (errData.error) errMsg = errData.error;
-         } catch(e) {}
-         throw new Error(errMsg);
+        let errMsg = `AI Proxy returned status ${res.status}`;
+        try {
+          const errData = await res.json();
+          if (errData.error) errMsg = errData.error;
+        } catch (e) { }
+        throw new Error(errMsg);
       }
-      
+
       const data = await res.json();
       if (data.result) {
         setAiSummary(data.result);
@@ -291,13 +341,14 @@ const Dashboard = () => {
 
   // Memoized stats counts
   const stats = useMemo(() => {
-    const openPRsCount = prs.filter(p => p.state === 'open').length;
-    const failedPipelinesCount = pipelines.filter(p => p.status === 'failed').length;
-    const doneCardsCount = cards.filter(c => c.status === 'done').length;
+    // Show total counts so we don't just display 0 for healthy/inactive repos
+    const prsCount = prs.length;
+    const pipelinesCount = pipelines.length;
+    const cardsCount = cards.length;
     return {
-      waiting: openPRsCount,
-      failed: failedPipelinesCount,
-      done: doneCardsCount
+      waiting: prsCount,
+      failed: pipelinesCount,
+      done: cardsCount
     };
   }, [prs, pipelines, cards]);
 
@@ -344,7 +395,7 @@ const Dashboard = () => {
           <Text style={{ color: textSub }} className="text-center text-sm max-w-xs mb-8">
             Start by connecting a repository or project management board to sync your code workspace details here in real-time.
           </Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             className="bg-[#222222] dark:bg-yellow-500 px-6 py-3.5 rounded-xl shadow-md flex-row items-center animate-bounce"
             onPress={() => router.push('/connected-accounts')}
           >
@@ -358,107 +409,20 @@ const Dashboard = () => {
 
   return (
     <SafeAreaView className="flex-1 bg-white dark:bg-[#121212]">
-      {/* Top Bar with Repo/Board Selectors */}
-      <View className="bg-[#1e1e1e] dark:bg-[#1a1a1a] px-4 pt-12 pb-4 flex-col gap-3">
-        <View className="flex-row justify-between items-center">
-          <View className="flex-row items-center">
-            <Text className="text-white text-2xl font-bold tracking-tighter">git</Text>
-            <Text className="text-yellow-500 text-2xl font-black tracking-tighter ml-0.5">Cube</Text>
-          </View>
-          <View className="flex-row gap-3">
-            <TouchableOpacity 
-              className="border border-white/20 rounded-lg p-2"
-              onPress={() => router.push('/notifications')}
-            >
-              <Ionicons name="notifications-outline" size={20} color="white" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              className="border border-white/20 rounded-lg p-2"
-              activeOpacity={0.7}
-              onPress={() => router.push('/profile')}
-            >
-              <Ionicons name="person-outline" size={20} color="white" />
-            </TouchableOpacity>
-          </View>
+      {/* Top Bar */}
+      <View className="bg-white dark:bg-[#121212] border-b border-gray-200 dark:border-gray-900 px-4 pt-12 pb-4 flex-row justify-between items-center">
+        <View className="flex-row items-center">
+          <Text className="text-black dark:text-white text-2xl font-bold tracking-tighter">git</Text>
+          <Text className="text-yellow-500 text-2xl font-black tracking-tighter ml-0.5">Cube</Text>
         </View>
-
-        {/* Dynamic Selectors */}
-        <View className="flex-row gap-2">
-          {/* Repo dropdown selector */}
-          {repositories.length > 0 && (
-            <View className="flex-1 relative">
-              <TouchableOpacity
-                className="bg-[#2d2d2d] dark:bg-[#262626] px-3 py-2 rounded-xl flex-row justify-between items-center border border-white/10"
-                onPress={() => {
-                  setShowRepoDropdown(!showRepoDropdown);
-                  setShowBoardDropdown(false);
-                }}
-              >
-                <Ionicons name="git-branch-outline" size={14} color="#F5C518" style={{ marginRight: 6 }} />
-                <Text className="text-white font-bold text-xs flex-1" numberOfLines={1}>
-                  {selectedRepo ? selectedRepo.name : 'Select Repo'}
-                </Text>
-                <Ionicons name="chevron-down" size={12} color="#888" style={{ marginLeft: 4 }} />
-              </TouchableOpacity>
-
-              {showRepoDropdown && (
-                <View className="absolute left-0 right-0 top-10 bg-[#2d2d2d] border border-white/10 rounded-xl overflow-hidden z-50 shadow-lg">
-                  <ScrollView style={{ maxHeight: 150 }} nestedScrollEnabled={true}>
-                    {repositories.map(r => (
-                      <TouchableOpacity
-                        key={r.id + r.provider}
-                        className="px-3 py-2.5 border-b border-white/5 flex-row items-center justify-between active:bg-[#333]"
-                        onPress={() => handleSelectRepo(r)}
-                      >
-                        <Text className="text-white text-xs font-semibold" numberOfLines={1}>{r.name}</Text>
-                        {selectedRepo?.id === r.id && (
-                          <Ionicons name="checkmark" size={12} color="#F5C518" />
-                        )}
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-              )}
-            </View>
-          )}
-
-          {/* Board dropdown selector */}
-          {boards.length > 0 && (
-            <View className="flex-1 relative">
-              <TouchableOpacity
-                className="bg-[#2d2d2d] dark:bg-[#262626] px-3 py-2 rounded-xl flex-row justify-between items-center border border-white/10"
-                onPress={() => {
-                  setShowBoardDropdown(!showBoardDropdown);
-                  setShowRepoDropdown(false);
-                }}
-              >
-                <Ionicons name="layers-outline" size={14} color="#3b82f6" style={{ marginRight: 6 }} />
-                <Text className="text-white font-bold text-xs flex-1" numberOfLines={1}>
-                  {selectedBoard ? selectedBoard.name : 'Select Board'}
-                </Text>
-                <Ionicons name="chevron-down" size={12} color="#888" style={{ marginLeft: 4 }} />
-              </TouchableOpacity>
-
-              {showBoardDropdown && (
-                <View className="absolute left-0 right-0 top-10 bg-[#2d2d2d] border border-white/10 rounded-xl overflow-hidden z-50 shadow-lg">
-                  <ScrollView style={{ maxHeight: 150 }} nestedScrollEnabled={true}>
-                    {boards.map(b => (
-                      <TouchableOpacity
-                        key={b.id + b.provider}
-                        className="px-3 py-2.5 border-b border-white/5 flex-row items-center justify-between active:bg-[#333]"
-                        onPress={() => handleSelectBoard(b)}
-                      >
-                        <Text className="text-white text-xs font-semibold" numberOfLines={1}>{b.name}</Text>
-                        {selectedBoard?.id === b.id && (
-                          <Ionicons name="checkmark" size={12} color="#3b82f6" />
-                        )}
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-              )}
-            </View>
-          )}
+        <View className="flex-row gap-3">
+          <TouchableOpacity
+            className="border border-gray-300 dark:border-white/20 rounded-lg p-2"
+            activeOpacity={0.7}
+            onPress={() => router.push('/profile')}
+          >
+            <Ionicons name="person-outline" size={20} color={isDark ? "white" : "black"} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -468,14 +432,55 @@ const Dashboard = () => {
         </View>
       )}
 
-      <ScrollView 
-        className="flex-1" 
+      <ScrollView
+        className="flex-1"
         contentContainerStyle={{ paddingBottom: 40, paddingTop: 16 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#eab308" />
         }
       >
-        
+
+        {/* Dynamic Selectors */}
+        <View className="px-4 mb-6 z-50 relative">
+          {repositories.length > 0 && (
+            <View className="relative">
+              <TouchableOpacity
+                className="bg-gray-100 dark:bg-[#1e1e1e] px-4 py-3 rounded-xl flex-row justify-between items-center border border-gray-200 dark:border-gray-800"
+                onPress={() => {
+                  setShowRepoDropdown(!showRepoDropdown);
+                  setShowBoardDropdown(false);
+                }}
+              >
+                <View className="flex-row items-center flex-1">
+                  <Ionicons name="git-branch-outline" size={16} color="#eab308" style={{ marginRight: 8 }} />
+                  <Text className="text-black dark:text-white font-bold text-sm" numberOfLines={1}>
+                    {selectedRepo ? selectedRepo.name : 'Select Repo'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-down" size={16} color="#888" />
+              </TouchableOpacity>
+
+              {showRepoDropdown && (
+                <View className="absolute left-0 right-0 top-14 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden z-50 shadow-lg">
+                  <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled={true}>
+                    {repositories.map(r => (
+                      <TouchableOpacity
+                        key={r.id + r.provider}
+                        className="px-4 py-3 border-b border-gray-100 dark:border-gray-800 flex-row items-center justify-between active:bg-gray-50 dark:active:bg-[#252525]"
+                        onPress={() => handleSelectRepo(r)}
+                      >
+                        <Text className="text-black dark:text-white text-sm font-semibold" numberOfLines={1}>{r.name}</Text>
+                        {selectedRepo?.id === r.id && (
+                          <Ionicons name="checkmark" size={16} color="#eab308" />
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+            </View>
+          )}
+        </View>
         {/* Dashboard Title */}
         <View className="px-4 mb-4 flex-row items-center">
           <Ionicons name="grid-outline" size={20} color={isDark ? "white" : "black"} />
@@ -491,15 +496,15 @@ const Dashboard = () => {
               <Text className="text-3xl font-black text-black dark:text-white">{stats.waiting}</Text>
               <View className="w-2 h-2 rounded-full bg-yellow-500 mt-2" />
             </View>
-            <Text className="text-gray-500 dark:text-gray-400 text-xs font-semibold mt-2">Open PRs</Text>
+            <Text className="text-gray-500 dark:text-gray-400 text-xs font-semibold mt-2">Total PRs</Text>
           </View>
-          
+
           <View className="bg-white dark:bg-[#1e1e1e] p-4 rounded-2xl border-2 border-black dark:border-yellow-500 w-[31%] flex-col">
             <View className="flex-row justify-between items-start">
               <Text className="text-3xl font-black text-black dark:text-white">{stats.failed}</Text>
-              <View className="w-2 h-2 rounded-full bg-red-500 mt-2" />
+              <View className="w-2 h-2 rounded-full bg-blue-500 mt-2" />
             </View>
-            <Text className="text-gray-500 dark:text-gray-400 text-xs font-semibold mt-2">CI Failed</Text>
+            <Text className="text-gray-500 dark:text-gray-400 text-xs font-semibold mt-2">CI Runs</Text>
           </View>
 
           <View className="bg-white dark:bg-[#1e1e1e] p-4 rounded-2xl border-2 border-black dark:border-yellow-500 w-[31%] flex-col">
@@ -507,7 +512,7 @@ const Dashboard = () => {
               <Text className="text-3xl font-black text-black dark:text-white">{stats.done}</Text>
               <View className="w-2 h-2 rounded-full bg-green-500 mt-2" />
             </View>
-            <Text className="text-gray-500 dark:text-gray-400 text-xs font-semibold mt-2">Done Cards</Text>
+            <Text className="text-gray-500 dark:text-gray-400 text-xs font-semibold mt-2">Total Cards</Text>
           </View>
         </View>
 
@@ -525,11 +530,18 @@ const Dashboard = () => {
             </View>
           ) : (
             recentPRs.map(pr => {
-              let badgeColor = 'border-gray-300 text-gray-500 dark:border-gray-800 text-gray-400';
+              let badgeBorder = 'border-gray-300 dark:border-gray-800';
+              let badgeText = 'text-gray-500 dark:text-gray-400';
+
               if (pr.state === 'open') {
-                badgeColor = 'border-green-500 text-green-500';
+                badgeBorder = 'border-green-500';
+                badgeText = 'text-green-600 dark:text-green-500';
               } else if (pr.state === 'merged') {
-                badgeColor = 'border-purple-500 text-purple-500';
+                badgeBorder = 'border-purple-500';
+                badgeText = 'text-purple-600 dark:text-purple-500';
+              } else if (pr.state === 'closed') {
+                badgeBorder = 'border-red-500';
+                badgeText = 'text-red-600 dark:text-red-500';
               }
 
               return (
@@ -559,8 +571,8 @@ const Dashboard = () => {
                       </Text>
                     </View>
                   </View>
-                  <View className={`border rounded-full px-2 py-0.5 ${badgeColor}`}>
-                    <Text className="text-[10px] font-bold uppercase tracking-wider">{pr.state}</Text>
+                  <View className={`border rounded-full px-2 py-0.5 ${badgeBorder}`}>
+                    <Text className={`text-[10px] font-bold uppercase tracking-wider ${badgeText}`}>{pr.state}</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -569,7 +581,7 @@ const Dashboard = () => {
         </View>
 
         {/* Board column cards summary scroll */}
-        {selectedBoard && (
+        {selectedBoard ? (
           <View>
             <View className="px-4 mb-3 flex-row items-center border-t border-dashed border-gray-300 dark:border-gray-800 pt-4">
               <Text className="text-gray-400 dark:text-gray-600 mr-2">{"→"}</Text>
@@ -646,6 +658,13 @@ const Dashboard = () => {
               })}
             </ScrollView>
           </View>
+        ) : (
+          <View className="px-4 mt-4">
+            <View className="py-6 items-center border border-dashed border-gray-200 dark:border-gray-800 rounded-xl">
+              <Ionicons name="albums-outline" size={24} color="#888" />
+              <Text className="text-gray-400 text-xs mt-2">No active board selected.</Text>
+            </View>
+          </View>
         )}
 
         {/* AI Diff Summary Section */}
@@ -703,6 +722,66 @@ const Dashboard = () => {
         )}
 
       </ScrollView>
+
+      {/* Release Notes Modal */}
+      <Modal
+        visible={showReleaseNotes}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={handleCloseReleaseNotes}
+      >
+        <View className="flex-1 justify-center items-center bg-black/60 px-4">
+          <View className="bg-white dark:bg-[#1e1e1e] w-full max-w-sm rounded-3xl p-6 shadow-xl border border-gray-200 dark:border-gray-800">
+            <View className="flex-row items-center justify-between mb-4">
+              <View className="flex-row items-center">
+                <Ionicons name="rocket" size={24} color="#eab308" style={{ marginRight: 8 }} />
+                <Text className="text-xl font-bold text-black dark:text-white">v1.1.0 Release Notes</Text>
+              </View>
+              <TouchableOpacity onPress={handleCloseReleaseNotes} className="bg-gray-100 dark:bg-gray-800 rounded-full p-2">
+                <Ionicons name="close" size={20} color={isDark ? "white" : "black"} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
+              <View className="mb-4">
+                <Text className="text-sm font-bold text-black dark:text-white mb-2 tracking-wide">🚀 NEW FEATURES & IMPROVEMENTS</Text>
+                <Text className="text-xs text-gray-600 dark:text-gray-400 mb-2 leading-tight">
+                  <Text className="font-bold text-gray-800 dark:text-gray-200">• Security Features Added: </Text>
+                  Added robust security features and improved token handling across the application.
+                </Text>
+                <Text className="text-xs text-gray-600 dark:text-gray-400 mb-2 leading-tight">
+                  <Text className="font-bold text-gray-800 dark:text-gray-200">• Notifications Page Update: </Text>
+                  You can now see your entire recent notification history directly in the app.
+                </Text>
+                <Text className="text-xs text-gray-600 dark:text-gray-400 mb-2 leading-tight">
+                  <Text className="font-bold text-gray-800 dark:text-gray-200">• Enhanced PR Quick Actions: </Text>
+                  Approve, Merge, and Re-run Pipelines directly from the Notifications screen.
+                </Text>
+              </View>
+
+              <View className="mb-4">
+                <Text className="text-sm font-bold text-black dark:text-white mb-2 tracking-wide">🐛 BUG FIXES</Text>
+                <Text className="text-xs text-gray-600 dark:text-gray-400 mb-2 leading-tight">
+                  <Text className="font-bold text-gray-800 dark:text-gray-200">• Settings UI Alignment: </Text>
+                  Chevron arrows for connected accounts are now aligned properly.
+                </Text>
+                <Text className="text-xs text-gray-600 dark:text-gray-400 mb-2 leading-tight">
+                  <Text className="font-bold text-gray-800 dark:text-gray-200">• Notification ID Extraction: </Text>
+                  Resolved an API parsing issue that caused Quick Actions to fail.
+                </Text>
+              </View>
+            </ScrollView>
+
+            <TouchableOpacity
+              className="bg-yellow-500 rounded-xl py-3 items-center mt-2 shadow-sm"
+              onPress={handleCloseReleaseNotes}
+            >
+              <Text className="text-black font-black text-sm uppercase tracking-widest">Awesome!</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 };
