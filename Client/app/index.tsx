@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import * as SecureStore from 'expo-secure-store';
 import { isLoggedIn, getToken } from '../src/api/auth';
 
 export default function IndexScreen() {
@@ -40,6 +41,15 @@ export default function IndexScreen() {
           }
         } else {
           // Normal startup routing (or bare gitcube:// with no real code)
+          const hasSeenWalkthrough = Platform.OS === 'web'
+            ? localStorage.getItem('has_seen_walkthrough')
+            : await SecureStore.getItemAsync('has_seen_walkthrough');
+
+          if (!hasSeenWalkthrough) {
+            router.replace('/walkthrough' as any);
+            return;
+          }
+
           const loggedIn = await isLoggedIn();
           if (loggedIn) {
             router.replace('/(tabs)');

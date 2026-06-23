@@ -378,22 +378,29 @@ export interface GHNotification {
 
 export async function getNotifications(token: string): Promise<GHNotification[]> {
   const res = await fetch(
-    `${GITHUB_API}/notifications?all=false&per_page=50`,
-    { headers: ghHeaders(token) }
+    `${GITHUB_API}/notifications?all=true&per_page=50&t=${Date.now()}`,
+    { headers: { ...ghHeaders(token), 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } }
   );
   if (!res.ok) return [];
   const data = await res.json();
-  return data.map((n: any): GHNotification => ({
-    _id: n.id,
-    type: mapNotifType(n.reason, n.subject?.type),
-    title: n.subject?.title ?? n.repository?.full_name ?? 'Notification',
-    body: `${n.repository?.full_name ?? ''} — ${n.reason}`,
-    read: n.unread === false,
-    provider: 'github',
-    repoId: n.repository?.full_name,
-    resourceId: n.subject?.url,
-    createdAt: n.updated_at,
-  }));
+  return data.map((n: any): GHNotification => {
+    let resId = undefined;
+    if (n.subject?.url) {
+      const parts = n.subject.url.split('/');
+      resId = parts[parts.length - 1];
+    }
+    return {
+      _id: n.id,
+      type: mapNotifType(n.reason, n.subject?.type, n.subject?.title),
+      title: n.subject?.title ?? n.repository?.full_name ?? 'Notification',
+      body: `${n.repository?.full_name ?? ''} — ${n.reason}`,
+      read: n.unread === false,
+      provider: 'github',
+      repoId: n.repository?.full_name,
+      resourceId: resId,
+      createdAt: n.updated_at,
+    };
+  });
 }
 
 export async function markNotificationRead(token: string, threadId: string): Promise<void> {
@@ -411,10 +418,14 @@ export async function markAllNotificationsRead(token: string): Promise<void> {
   });
 }
 
-function mapNotifType(reason: string, subjectType: string): GHNotification['type'] {
-  if (reason === 'review_requested' || reason === 'comment') return 'pr_review';
-  if (reason === 'mention') return 'mention';
-  if (reason === 'ci_activity') return 'ci_failure';
+function mapNotifType(reason: string, subjectType: string, title: string = ''): GHNotification['type'] {
+  if (reason === 'mention' || reason === 'team_mention') return 'mention';
+  if (reason === 'ci_activity' || subjectType === 'WorkflowRun' || subjectType === 'CheckSuite') return 'ci_failure';
+  if (subjectType === 'PullRequest' || reason === 'review_requested') {
+    if (title.toLowerCase().includes('conflict')) return 'merge_conflict';
+    return 'pr_review';
+  }
+  if (title.toLowerCase().includes('conflict')) return 'merge_conflict';
   return 'other';
 }
 
@@ -452,8 +463,8 @@ export async function getBoardsFromRepos(token: string, repos: GHRepo[]): Promis
 
 export async function getIssuesAsCards(token: string, fullName: string): Promise<GHCard[]> {
   const res = await fetch(
-    `${GITHUB_API}/repos/${fullName}/issues?state=open&per_page=50`,
-    { headers: ghHeaders(token) }
+    `${GITHUB_API}/repos/${fullName}/issues?state=open&per_page=50&t=${Date.now()}`,
+    { headers: { ...ghHeaders(token), 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } }
   );
   if (!res.ok) return [];
   const data = await res.json();

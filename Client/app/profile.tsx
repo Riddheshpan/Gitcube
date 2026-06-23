@@ -10,13 +10,16 @@ import {
   ActivityIndicator, 
   Platform, 
   KeyboardAvoidingView,
-  Alert
+  Alert,
+  Switch
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import { useColorScheme } from "nativewind";
+import * as LocalAuthentication from 'expo-local-authentication';
+import { useBoundStore } from "../src/store";
 
 const DEFAULT_USERNAME = "Test";
 const DEFAULT_FULLNAME = "test example";
@@ -27,6 +30,10 @@ export default function Profilepage() {
   const router = useRouter();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === "dark";
+
+  // Global Store
+  const repositories = useBoundStore((state) => state.repositories);
+  const boards = useBoundStore((state) => state.boards);
 
   // Profile data states
   const [loading, setLoading] = useState(true);
@@ -41,6 +48,8 @@ export default function Profilepage() {
   // Connection states (default to mockup screenshot values)
   const [githubConnected, setGithubConnected] = useState(true);
   const [gitlabConnected, setGitlabConnected] = useState(true); // represents 'expired' in GitLab row
+  const [githubNotificationsEnabled, setGithubNotificationsEnabled] = useState(true);
+  const [biometricsEnabled, setBiometricsEnabled] = useState(false);
 
   // Edit form modal states
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -118,6 +127,11 @@ export default function Profilepage() {
       
       setGithubConnected(!!ghToken);
       setGitlabConnected(!!glToken);
+      
+      if (Platform.OS !== "web") {
+        const biometricsSaved = await SecureStore.getItemAsync("biometrics_enabled");
+        setBiometricsEnabled(biometricsSaved === "true");
+      }
 
     } catch (e) {
       console.warn("Could not load profile from local storage, using fallback:", e);
@@ -138,6 +152,38 @@ export default function Profilepage() {
     setEditEmail(profile.email);
     setEditDefaultWorkspace(profile.defaultWorkspace);
     setEditModalVisible(true);
+  };
+
+  const handleBiometricToggle = async (newValue: boolean) => {
+    if (newValue) {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      
+      if (!hasHardware || !isEnrolled) {
+        Alert.alert("Error", "Biometric authentication is not available or not set up on this device.");
+        return;
+      }
+      
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: "Authenticate to enable App Lock",
+        fallbackLabel: "Use Passcode",
+      });
+      
+      if (result.success) {
+        if (Platform.OS !== "web") await SecureStore.setItemAsync("biometrics_enabled", "true");
+        setBiometricsEnabled(true);
+      }
+    } else {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: "Authenticate to disable App Lock",
+        fallbackLabel: "Use Passcode",
+      });
+      
+      if (result.success) {
+         if (Platform.OS !== "web") await SecureStore.setItemAsync("biometrics_enabled", "false");
+         setBiometricsEnabled(false);
+      }
+    }
   };
 
   const handleSaveProfile = async () => {
@@ -295,14 +341,6 @@ export default function Profilepage() {
           <Text className="text-black dark:text-white text-2xl font-bold tracking-tighter">git</Text>
           <Text className="text-yellow-500 text-2xl font-black tracking-tighter ml-0.5">Cube</Text>
         </View>
-        <View className="flex-row space-x-3">
-          <View className="border border-gray-200 dark:border-white/10 rounded-lg p-2">
-            <Ionicons name="notifications-outline" size={20} color={getHeaderIconColor()} />
-          </View>
-          <View className="border border-yellow-500/30 rounded-lg p-2 bg-yellow-500/5">
-            <Ionicons name="person" size={20} color="#eab308" />
-          </View>
-        </View>
       </View>
 
       <ScrollView 
@@ -312,46 +350,34 @@ export default function Profilepage() {
       >
         {/* Profile Card Section */}
         <View className="items-center mb-6">
-          <View className="relative mb-3">
-            {/* Initials Avatar */}
-            <View className="w-24 h-24 rounded-full border-4 border-yellow-500 items-center justify-center bg-white dark:bg-[#1e1e1e]">
-              <Text className="text-yellow-600 dark:text-yellow-500 text-3xl font-bold tracking-wider">
+          <View className="mb-4 shadow-sm">
+            {/* Sleek Initials Avatar */}
+            <View className="w-24 h-24 rounded-full items-center justify-center bg-gray-100 dark:bg-[#1a1a1a] border-2 border-gray-200 dark:border-[#333]">
+              <Text className="text-black dark:text-white text-3xl font-black tracking-widest">
                 {getInitials(profile.fullName, profile.username)}
               </Text>
             </View>
-            {/* Edit overlay icon */}
-            <TouchableOpacity 
-              onPress={handleOpenEdit}
-              className="absolute bottom-0 right-0 bg-yellow-500 w-8 h-8 rounded-full border-2 border-white dark:border-[#121212] items-center justify-center shadow-md"
-              activeOpacity={0.8}
-            >
-              <Ionicons name="camera-outline" size={16} color="black" />
-            </TouchableOpacity>
           </View>
 
           <Text className="text-black dark:text-white text-2xl font-black tracking-tight">{profile.fullName}</Text>
           <Text className="text-gray-500 dark:text-gray-400 text-sm font-semibold mt-1">@{profile.username}</Text>
-
-          <View className="bg-yellow-500/15 dark:bg-yellow-500/10 border border-yellow-500/30 rounded-full px-4 py-1 mt-3">
-            <Text className="text-yellow-600 dark:text-yellow-500 text-xs font-black tracking-widest uppercase">PRO</Text>
-          </View>
         </View>
 
         {/* Dash/Stats Box Section */}
         <View className="flex-row justify-between mb-8">
           <View className="border-2 border-dashed border-yellow-500/40 bg-white dark:bg-yellow-500/5 rounded-2xl py-4 px-2 w-[31%] items-center justify-center">
-            <Text className="text-3xl font-black text-yellow-500">38</Text>
-            <Text className="text-gray-500 dark:text-gray-400 text-[10px] font-bold text-center mt-1 uppercase tracking-wider">PRs Reviewed</Text>
+            <Text className="text-3xl font-black text-yellow-500">{repositories.length}</Text>
+            <Text className="text-gray-500 dark:text-gray-400 text-[10px] font-bold text-center mt-1 uppercase tracking-wider">Linked Repos</Text>
           </View>
           
           <View className="border-2 border-dashed border-yellow-500/40 bg-white dark:bg-yellow-500/5 rounded-2xl py-4 px-2 w-[31%] items-center justify-center">
-            <Text className="text-3xl font-black text-yellow-500">14</Text>
-            <Text className="text-gray-500 dark:text-gray-400 text-[10px] font-bold text-center mt-1 uppercase tracking-wider">CI Runs</Text>
+            <Text className="text-3xl font-black text-yellow-500">{boards.length}</Text>
+            <Text className="text-gray-500 dark:text-gray-400 text-[10px] font-bold text-center mt-1 uppercase tracking-wider">Active Boards</Text>
           </View>
 
           <View className="border-2 border-dashed border-yellow-500/40 bg-white dark:bg-yellow-500/5 rounded-2xl py-4 px-2 w-[31%] items-center justify-center">
-            <Text className="text-3xl font-black text-yellow-500">7</Text>
-            <Text className="text-gray-500 dark:text-gray-400 text-[10px] font-bold text-center mt-1 uppercase tracking-wider">Active Boards</Text>
+            <Text className="text-3xl font-black text-yellow-500">{(githubConnected ? 1 : 0) + (gitlabConnected ? 1 : 0)}</Text>
+            <Text className="text-gray-500 dark:text-gray-400 text-[10px] font-bold text-center mt-1 uppercase tracking-wider">Accounts Linked</Text>
           </View>
         </View>
 
@@ -457,44 +483,45 @@ export default function Profilepage() {
         {/* SECURITY Card */}
         <Text className="text-gray-500 dark:text-gray-400 text-xs font-black tracking-widest mb-3 uppercase">Security</Text>
         <View className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-900 rounded-2xl p-4 mb-6 space-y-4 shadow-sm">
-          <View className="flex-row items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800/40">
-            <View className="flex-row items-center flex-1">
-              <IconFrame color="yellow">
-                <Ionicons name="shield-checkmark-outline" size={18} color={getYellowIconColor()} />
-              </IconFrame>
-              <View className="flex-1">
-                <Text className="text-gray-400 dark:text-gray-500 text-[10px] font-black uppercase tracking-wider">Two-Factor Auth</Text>
-                <Text className="text-black dark:text-white font-bold text-sm mt-0.5">Enabled</Text>
-              </View>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color="#aaa" />
-          </View>
-
-          <View className="flex-row items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800/40">
-            <View className="flex-row items-center flex-1">
-              <IconFrame color="yellow">
-                <Ionicons name="key-outline" size={18} color={getYellowIconColor()} />
-              </IconFrame>
-              <View className="flex-1">
-                <Text className="text-gray-400 dark:text-gray-500 text-[10px] font-black uppercase tracking-wider">API Token</Text>
-                <Text className="text-black dark:text-white font-bold text-sm mt-0.5">••••••••a3f9</Text>
-              </View>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color="#aaa" />
-          </View>
-
           <View className="flex-row items-center justify-between">
             <View className="flex-row items-center flex-1">
               <IconFrame color="yellow">
-                <Ionicons name="desktop-outline" size={18} color={getYellowIconColor()} />
+                <Ionicons name="finger-print-outline" size={18} color={getYellowIconColor()} />
               </IconFrame>
               <View className="flex-1">
-                <Text className="text-gray-400 dark:text-gray-500 text-[10px] font-black uppercase tracking-wider">Active Sessions</Text>
-                <Text className="text-black dark:text-white font-bold text-sm mt-0.5">2 devices</Text>
+                <Text className="text-gray-400 dark:text-gray-500 text-[10px] font-black uppercase tracking-wider">App Lock</Text>
+                <Text className="text-black dark:text-white font-bold text-sm mt-0.5">Require Biometrics</Text>
+              </View>
+            </View>
+            <Switch
+              trackColor={{ false: "#767577", true: "#eab308" }}
+              thumbColor={biometricsEnabled ? "#f4f3f4" : "#f4f3f4"}
+              ios_backgroundColor="#3e3e3e"
+              onValueChange={handleBiometricToggle}
+              value={biometricsEnabled}
+            />
+          </View>
+        </View>
+
+        {/* PREFERENCES Card */}
+        <Text className="text-gray-500 dark:text-gray-400 text-xs font-black tracking-widest mb-3 uppercase">Preferences</Text>
+        <View className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-900 rounded-2xl p-4 mb-6 space-y-4 shadow-sm">
+          <TouchableOpacity 
+            onPress={() => router.push('/walkthrough' as any)}
+            className="flex-row items-center justify-between"
+            activeOpacity={0.7}
+          >
+            <View className="flex-row items-center flex-1">
+              <IconFrame color="yellow">
+                <Ionicons name="information-circle-outline" size={18} color={getYellowIconColor()} />
+              </IconFrame>
+              <View className="flex-1">
+                <Text className="text-gray-400 dark:text-gray-500 text-[10px] font-black uppercase tracking-wider">App Guide</Text>
+                <Text className="text-black dark:text-white font-bold text-sm mt-0.5">Show App Walkthrough</Text>
               </View>
             </View>
             <Ionicons name="chevron-forward" size={16} color="#aaa" />
-          </View>
+          </TouchableOpacity>
         </View>
 
         {/* DANGER ZONE Card */}

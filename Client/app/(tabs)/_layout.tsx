@@ -4,7 +4,7 @@ import React from 'react';
 import { HapticTab } from '@/components/haptic-tab';
 import { useColorScheme } from 'nativewind';
 import { Ionicons } from '@expo/vector-icons';
-import { View } from 'react-native';
+import { Platform } from 'react-native';
 
 export default function TabLayout() {
   const { colorScheme } = useColorScheme();
@@ -17,17 +17,14 @@ export default function TabLayout() {
         tabBarButton: HapticTab,
         tabBarStyle: {
           backgroundColor: isDark ? '#1a1a1a' : '#ffffff',
-          borderTopWidth: 2,
+          borderTopWidth: 1,
           borderTopColor: isDark ? '#333333' : '#e5e7eb',
-          height: 62,
-          paddingBottom: 8,
         },
-        tabBarActiveTintColor: isDark ? '#eab308' : '#111111',
+        tabBarActiveTintColor: '#eab308',
         tabBarInactiveTintColor: isDark ? '#666666' : '#9ca3af',
         tabBarLabelStyle: {
           fontSize: 11,
-          fontWeight: '600',
-          marginTop: -2,
+          fontWeight: '700',
         },
       }}>
       <Tabs.Screen
@@ -35,9 +32,7 @@ export default function TabLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ color, focused }) => (
-            <View className={`p-1.5 rounded-xl ${focused ? 'bg-yellow-400' : 'bg-transparent'}`}>
-              <Ionicons name="grid-outline" size={24} color={focused ? 'black' : color} />
-            </View>
+            <Ionicons name={focused ? "grid" : "grid-outline"} size={24} color={color} />
           ),
         }}
       />
@@ -46,9 +41,7 @@ export default function TabLayout() {
         options={{
           title: 'PRs',
           tabBarIcon: ({ color, focused }) => (
-            <View className={`p-1.5 rounded-xl ${focused ? 'bg-yellow-400' : 'bg-transparent'}`}>
-              <Ionicons name="git-pull-request-outline" size={24} color={focused ? 'black' : color} />
-            </View>
+            <Ionicons name={focused ? "git-pull-request" : "git-pull-request-outline"} size={24} color={color} />
           ),
         }}
       />
@@ -57,9 +50,7 @@ export default function TabLayout() {
         options={{
           title: 'Board',
           tabBarIcon: ({ color, focused }) => (
-            <View className={`p-1.5 rounded-xl ${focused ? 'bg-yellow-400' : 'bg-transparent'}`}>
-              <Ionicons name="clipboard-outline" size={24} color={focused ? 'black' : color} />
-            </View>
+            <Ionicons name={focused ? "clipboard" : "clipboard-outline"} size={24} color={color} />
           ),
         }}
       />
@@ -68,9 +59,7 @@ export default function TabLayout() {
         options={{
           title: 'Alerts',
           tabBarIcon: ({ color, focused }) => (
-            <View className={`p-1.5 rounded-xl ${focused ? 'bg-yellow-400' : 'bg-transparent'}`}>
-              <Ionicons name="notifications-outline" size={24} color={focused ? 'black' : color} />
-            </View>
+            <Ionicons name={focused ? "notifications" : "notifications-outline"} size={24} color={color} />
           ),
         }}
       />
@@ -79,9 +68,7 @@ export default function TabLayout() {
         options={{
           title: 'Settings',
           tabBarIcon: ({ color, focused }) => (
-            <View className={`p-1.5 rounded-xl ${focused ? 'bg-yellow-400' : 'bg-transparent'}`}>
-              <Ionicons name="settings-outline" size={24} color={focused ? 'black' : color} />
-            </View>
+            <Ionicons name={focused ? "settings" : "settings-outline"} size={24} color={color} />
           ),
         }}
       />
